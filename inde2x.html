@@ -1,8 +1,29 @@
-﻿<!DOCTYPE html>
+﻿
+
+<!DOCTYPE html>
 <html lang="en" xmlns="http://www.w3.org/1999/html">
 
 <head>
-    <link rel="shortcut icon" type="image/png" href="favicon.png">
+    <!-- Favicon (legacy + default) -->
+    <link rel="icon" href="./favicons/favicon.ico" sizes="any">
+    <link rel="icon" type="image/png" href="./favicons/favicon-32x32.png" sizes="32x32">
+    <link rel="icon" type="image/png" href="./favicons/favicon-16x16.png" sizes="16x16">
+
+    <!-- Apple / iOS -->
+    <link rel="apple-touch-icon" href="/favicons/apple-touch-icon.png" sizes="180x180">
+
+    <!-- PWA / Android -->
+    <link rel="manifest" href="/oxdna-viewer/favicons/site.webmanifest">
+    <link rel="icon" type="image/png" href="./favicons/android-chrome-192x192.png" sizes="192x192">
+    <link rel="icon" type="image/png" href="./favicons/android-chrome-512x512.png" sizes="512x512">
+
+    <!-- Windows tiles (optional) -->
+    <meta name="msapplication-TileImage" content="./favicons/mstile-150x150.png">
+    <meta name="msapplication-TileColor" content="#ffffff">
+
+    <!--<link rel="shortcut icon" type="image/png" href="/favicons/favicon.ico"> -->
+
+    <script async src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <!-- Global site tag (gtag.js) - Google Analytics -->
     <script async src="https://www.googletagmanager.com/gtag/js?id=UA-171800090-1"></script>
     <script>
@@ -24,17 +45,6 @@
     <link rel="stylesheet" href="css/metro-icons.min.css">
 
     <link rel="stylesheet" href="css/style.css">
-    <style>
-        .static-ribbon-button:hover {
-            background-color: transparent !important;
-            border-color: transparent !important;
-            cursor: default;
-        }
-        a.ribbon-button {
-            color: #000000;
-            text-decoration: none;
-        }
-    </style>
 </head>
 
 <body onload="view.updateImageResolutionText()"
@@ -161,8 +171,8 @@
             <button onclick="readPDBFromId(document.getElementById('importPDBID').value)" class="button primary js-dialog-close">Import</button>
         </div>
     </div>
-
-        <div id='scadnanoDialog' class="dialog" data-role="dialog">
+    
+    <div id='scadnanoDialog' class="dialog" data-role="dialog">
         <div class="dialog-title">Scadnano Export</div>
         <div class="dialog-content">
             <label>File name:</label>
@@ -190,14 +200,14 @@
             </button>
         </div>
     </div>
-    
+
     <div id='importNanobaseDialog' class="dialog" data-role="dialog">
         <h2>Import Nanobase</h2>
         Type the link of a Nanobase structure to load it into oxView.
-        <input type="text" value="https://nanobase.org/structure/15" data-role="input" data-prepend="URL" id="importNanobase">
+        <input type="text" value="https://nanobase.org/structures/15" data-role="input" data-prepend="URL" id="importNanobase">
         <div class="dialog-actions">
             <button class="button js-dialog-close">Cancel</button>
-            <button onclick="readNanobaseFromURL(document.getElementById('importNanobase').value)" class="button primary js-dialog-close">Import</button>
+            <button id="importFromNanobaseButton" class="button primary js-dialog-close">Import</button>
         </div>
     </div>
 
@@ -309,7 +319,8 @@
         <div style="display: table-column">
             <div style="display: table-row-group">
                 <input type="checkbox" id="topDownload" data-caption="Topology" title="Identies and connections of particles" checked data-role="checkbox">
-                <input type="checkbox" id="topFormat" data-caption="Use new top format (experimental)" title="New 5'-3' topology format" data-role="checkbox">
+                <input type="checkbox" id="topFormat" data-caption="Use new top format (SOON DEFAULT)" title="New 5'-3' topology format" data-role="checkbox">
+
             </div>
             <div style="display: table-row-group">
                 <input type="checkbox" id="datDownload" data-caption="Configuration" title="The xyz positions and rotations of particles" checked data-role="checkbox">
@@ -423,8 +434,7 @@
             <li ondblclick="view.sectionClicked()"><a href="#section-dynamics">Dynamics</a></li>
             <li ondblclick="view.sectionClicked()"><a href="#section-protein">Protein</a></li>
             <li ondblclick="view.sectionClicked()"><a href="#section-plugins">Plugins</a></li>
-            <li ondblclick="view.sectionClicked()"><a href="#section-library">Library</a></li>
-                        <li><a href="/dist/dash/" target="_blank" id="jobsLink">oxCloud</a></li>
+            
         </ul>
 
         <div class="content-holder">
@@ -504,7 +514,6 @@
                         <span class="mif-video-camera mif-2x"></span>
                         <span class="caption">Video</span>
                     </button> 
-
                     <span class="title mif-file-download mif-3x"> <b>Export</b></span>
                 </div>
                 <div class="group">
@@ -548,8 +557,7 @@
                         <li><a href="https://doi.org/10.1093/nar/gkaa417"><span class="mif-file-text icon"></span>&nbsp; Nucleic Acids Research 2020</a></li>
                     </ul>
                 </div>
-
-
+                
             </div>
 
             <!--Cam-->
@@ -870,7 +878,7 @@
                             <select id='NA_toggle'>
                                 <option value='DNA' selected='selected'>DNA</option>
                                 <option value='RNA'>RNA</option>
-                            <select>
+                            </select>
                             <span id='seqLen'>0</span>"
                         data-history="true" data-prevent-submit="true"
                         placeholder="Type a sequence here"
@@ -1253,56 +1261,7 @@
                 </div>
             </div>
 
-
-    <!--Library pane-->
-    <div class="section" id="section-library">
-        <div class="group">
-            <div style="display: flex; justify-content: center; align-items: flex-start;">
-                <button class="ribbon-button" onclick="createNewProject()" title="Create a new project in the local library">
-                    <span class="mif-file-empty mif-2x" style="height: 32px; display: flex; align-items: center; justify-content: center;"></span>
-                    <span class="caption">New Project</span>
-                </button>
-                <a href="/dist/dash/library" class="ribbon-button" title="Open the library to browse all saved projects">
-                    <span class="mif-books mif-2x" style="height: 32px; display: flex; align-items: center; justify-content: center;"></span>
-                    <span class="caption">Open Library</span>
-                </a>
-            </div>
-            <span class="title">Project</span>
         </div>
-
-        <div class="group">
-            <div style="display: flex; align-items: center; gap: 8px;">
-                <div class="flex-column" style="flex-grow: 1;">
-                    <input type="text" data-role="input" id="commitName" data-prepend="Commit Message" placeholder="Write commit message" style="height: 28px;"/>
-                    <button class="button" onclick="saveStructure()" style="width: 100%;">
-                        <span class="mif-floppy-disk"></span> Commit Current Work
-                    </button>
-                </div>
-                <div class="ribbon-button static-ribbon-button" id="project-name-display" style="display: none;" title="Name of the current open project">
-                    <span class="mif-bookmark mif-2x"></span>
-                    <span class="caption" id="current-project-name"></span>
-                </div>
-            </div>
-            <button class="ribbon-button" onclick="view.openCommitHistoryModal()" title="View all saved versions of the current project">
-                <span class="mif-history mif-2x"></span>
-                <span class="caption">View History</span>
-            </button>
-            <button class="ribbon-button" onclick="loadStructure()" title="Reload the latest saved version of this project">
-                <span class="mif-folder-open mif-2x"></span>
-                <span class="caption">Reload Latest</span>
-            </button>
-            <span class="title">Versioning</span>
-        </div>
-
-        <div class="group">
-             <button class="ribbon-button" onclick="view.toggleWindow('upload', initUploadWindow)" title="Submit structure to nanobase.org">
-                <span class="mif-upload mif-2x"></span>
-                <span class="caption">Submit to Nanobase</span>
-            </button>
-            <span class="title">Sharing</span>
-        </div>
-    </div>
-
     </nav>
 
     <div class="metro-round-rect" id ="floatingMenu">
@@ -1395,8 +1354,8 @@
 
     <div hidden=true id="hoverInfo">Description</div>
 
-        <!--Scadnano grid pane-->
-        <div id="scadnanoGridPane">
+    <!--Scadnano grid pane-->
+    <div id="scadnanoGridPane">
         <button id="scdgridClose" type="button" title="Close grid" aria-label="Close grid">&times;</button>
         <canvas id="scadnanoGridCanvas"></canvas>
         <div id="scadnanoGridResizeHandle" title="Drag to resize"></div>
@@ -1431,17 +1390,54 @@
         <script src="./dist/model/force.js"></script>
         <script src="./dist/scene/PBC_switchbox.js"></script>
         <script src="./dist/file_handling/file_getters.js"></script>
+        <script type="module">
+            // const apiRoot= "http://localhost:3002/api/v1";
+            const apiRoot= "https://api.nanobase.org/api/v1";
+
+            function readNanobaseFromURL(structureId) {
+                (async () => {
+                    const response = await fetch(`${apiRoot}/structure/getStructureOxdnaFiles?id=${structureId}`);
+
+                    if (!response.ok) {
+                        console.error("Failed to fetch oxdna files:", response.status);
+                        return;
+                    }
+
+                    const fileDataBlob = await response.blob();
+                    try {
+                        const zip = await JSZip.loadAsync(fileDataBlob);
+
+                        const files = await Promise.all(
+                            Object.keys(zip.files).map(async (fileName) => {
+                                const blob = await zip.files[fileName].async("blob");
+                                return new File([blob], fileName);
+                            })
+                        )
+                        handleFiles(files);
+                    } catch (error) {
+                        console.error("Error processing zip file:", error);
+                    }
+                })();
+            }
+
+            const importButton = document.getElementById('importFromNanobaseButton');
+
+            // Attach the event listener within the module's scope
+            importButton.addEventListener('click', () => {
+                const inputElement = document.getElementById('importNanobase');
+                if (inputElement) {
+                    const url = new URL(inputElement.value);
+                    const structureId = url.pathname.split('/').pop();
+                    readNanobaseFromURL(structureId);
+                } else {
+                    console.error("Input element with ID 'importNanobase' not found.");
+                }
+            });
+        </script>
         <script src="./dist/file_handling/file_handling.js"></script>
         <script src="./dist/file_handling/system_readers.js"></script>
         <script src="./dist/file_handling/aux_readers.js"></script>
         <script src="./dist/file_handling/script_reader.js"></script>
-        <script src="./dist/file_handling/tacoxdna_worker.js"></script>
-        <script src="./dist/file_handling/scadnano_export.js"></script>
-        <script src="./dist/helix/dsdnahelix.js"></script>
-        <script src="./dist/helix/scadnano_gridview.js"></script>
-        <script src="./dist/helix/conversion2.js"></script>
-        <script src="./dist/helix/gridpos.js"></script>
-        <script src="./dist/helix/ssrna.js"></script>
         <script src="./dist/editing/editing.js"></script>
         <script src="./dist/editing/doUndo.js"></script>
         <script src="./dist/editing/dijkstra.js"></script>
@@ -1483,16 +1479,13 @@
         <script src="./dist/editing/distance.js"></script>
         <script src="./dist/editing/selections.js"></script>
         <script src="./dist/api/plugin_api.js"></script>
-        <script src="./dist/utils/upload.js"></script>
-        <script src="./dist/api/sync.js"></script>
-        <script type="module" src="./dist/utils/dexieHelpers.js"></script>
-        <script src="./dist/utils/generateUUID.js"></script>
-        <script type="module" src="./dist/utils/auth.js"></script>
-        <script src="./dist/utils/commitHistoryWindow-script.js"></script>
-        <script src="./dist/utils/submitStructureWindow-script.js"></script>
-        <script type="module" src="./dist/utils/historyStorageService.js"></script>
-        <script type="module" src="./dist/utils/sharedStructureService.js"></script>
-        <script type="module" src="./dist/file_handling/temp_storage.js"></script>
+        <script src="./dist/helix/dsdnahelix.js"></script>
+        <script src="./dist/helix/scadnano_gridview.js"></script>
+        <script src="./dist/helix/conversion2.js"></script>
+        <script src="./dist/helix/gridpos.js"></script>
+        <script src="./dist/helix/ssrna.js"></script>
+        <script src="./dist/file_handling/scadnano_export.js"></script>
+        <script src="./dist/file_handling/taco.js"></script>
 
         <script>
             //https://stackoverflow.com/questions/326069/how-to-identify-if-a-webpage-is-being-loaded-inside-an-iframe-or-directly-into-t
