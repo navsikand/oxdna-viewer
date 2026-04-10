@@ -235,17 +235,21 @@ var toscad;
         let networkMap = angleMap;
         const mergedPairs = [];
         const mergeHelixInto = (keepHelix, mergedHelix) => {
+            const remapHelixId = (helixId) => {
+                if (helixId === mergedHelix)
+                    return keepHelix;
+                if (helixId > mergedHelix)
+                    return helixId - 1;
+                return helixId;
+            };
             for (const [, mark] of grid.entries()) {
-                if (mark.helixId === mergedHelix) {
-                    mark.helixId = keepHelix;
-                }
+                mark.helixId = remapHelixId(mark.helixId);
             }
-            if (helices[mergedHelix] && helices[mergedHelix].length > 0) {
-                if (!helices[keepHelix])
-                    helices[keepHelix] = [];
-                helices[keepHelix].push(...helices[mergedHelix]);
-                helices[mergedHelix] = [];
-            }
+            const keepNts = helices[keepHelix] ?? [];
+            const mergedNts = helices[mergedHelix] ?? [];
+            helices[keepHelix] = keepNts.concat(mergedNts);
+            // Remove the merged helix node and keep helix indexing compact.
+            helices.splice(mergedHelix, 1);
         };
         let pass = 0;
         while (pass++ < 200) {

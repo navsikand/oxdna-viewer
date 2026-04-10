@@ -461,7 +461,6 @@ class View {
     bbconnectorScale = 1;
     constructor(doc) {
         this.doc = doc;
-        window.view = this;
         // Initialise toggle groups
         this.coloringMode = new ToggleGroup('coloringMode', doc, () => { updateColoring(); });
         this.centeringMode = new ToggleGroupWithDisable('centering', doc, 'Origin', 'None');
@@ -1036,7 +1035,7 @@ class fluxGraph {
                 //    this.chart.toBase64Image();
                 //}
             },
-            responsiveAnimationDuration: 0, // animation duration after a resize
+            responsiveAnimationDuration: 0,
             responsive: true,
             title: {
                 display: true,
