@@ -4,6 +4,32 @@ let currentScadnanoHelices: Nucleotide[][] | null = null;
 let currentScadnanoConnections: Array<[number, number]> = [];
 type ScadnanoGridType = 'honeycomb' | 'square';
 
+type ScadnanoPreparedLayout = {
+    latticeType: ScadnanoGridType;
+    nucleotideCount: number;
+    helices: Nucleotide[][];
+    grid: any;
+    helixPos: Map<number, [number, number]>;
+};
+
+let currentScadnanoLayout: ScadnanoPreparedLayout | null = null;
+
+function getCurrentNucleotideCount(): number {
+    let count = 0;
+    elements.forEach((element) => {
+        if (element instanceof Nucleotide) count += 1;
+    });
+    return count;
+}
+
+function cloneHelixPosMap(input: Map<number, [number, number]>): Map<number, [number, number]> {
+    const out = new Map<number, [number, number]>();
+    input.forEach((value, key) => {
+        out.set(Number(key), [Number(value[0]), Number(value[1])]);
+    });
+    return out;
+}
+
 function notifyHelixCoverageMismatch(helices: Nucleotide[][], inputMap: Map<number, Nucleotide>) {
     const helixCount = helices.flat().length;
     const totalCount = inputMap.size;
@@ -16,7 +42,7 @@ function notifyHelixCoverageMismatch(helices: Nucleotide[][], inputMap: Map<numb
     );
 }
 
-async function calculateScadnanoHelices(): Promise<Nucleotide[][]> {
+function calculateScadnanoHelices(): Nucleotide[][] {
     const nucleotideElements = new Map<number, Nucleotide>();
     elements.forEach((element, id) => {
         if (element instanceof Nucleotide) {
@@ -24,17 +50,28 @@ async function calculateScadnanoHelices(): Promise<Nucleotide[][]> {
         }
     });
 
-    const helices = await honda.findHelices(nucleotideElements, 3);
+    const helices = honda.findHelices(nucleotideElements, 3) as Nucleotide[][];
     notifyHelixCoverageMismatch(helices, nucleotideElements);
     return helices;
 }
 
-async function prepareScadnanoLayout(latticeType: ScadnanoGridType): Promise<{
+function prepareScadnanoLayout(latticeType: ScadnanoGridType, forceRecompute = false): {
     helices: Nucleotide[][];
     grid: any;
     helixPos: Map<number, [number, number]>;
-}> {
-    const helices = await calculateScadnanoHelices();
+} {
+    const nucleotideCount = getCurrentNucleotideCount();
+    if (
+        !forceRecompute &&
+        currentScadnanoLayout &&
+        currentScadnanoLayout.latticeType === latticeType &&
+        currentScadnanoLayout.nucleotideCount === nucleotideCount
+    ) {
+        currentScadnanoHelices = currentScadnanoLayout.helices;
+        return currentScadnanoLayout;
+    }
+
+    const helices = calculateScadnanoHelices();
     currentScadnanoHelices = helices;
 
     const { grid, binderHelices } = toscad.setGrid(helices);
@@ -49,17 +86,21 @@ async function prepareScadnanoLayout(latticeType: ScadnanoGridType): Promise<{
     const corrected = toscad.anglecomb(grid, helices, latticeType, angles);
     const correct = toscad.anglecorr(grid, helices, latticeType, corrected.networkMap);
 
-    return {
+    currentScadnanoLayout = {
+        latticeType,
+        nucleotideCount,
         helices,
         grid,
         helixPos: toscad.calculateGlobalPositions(correct.networkMap, undefined, undefined, latticeType)
     };
+
+    return currentScadnanoLayout;
 }
 
-async function calculateScadnanoHelixPos(latticeType: ScadnanoGridType = 'square'): Promise<Map<number, [number, number]>> {
-    const { helixPos } = await prepareScadnanoLayout(latticeType);
+function calculateScadnanoHelixPos(latticeType: ScadnanoGridType = 'square'): Map<number, [number, number]> {
+    const { helixPos } = prepareScadnanoLayout(latticeType);
     // return toscad.HelixPosByRelativeBfs(grid, helices);
-    return helixPos;
+    return cloneHelixPosMap(helixPos);
     // return toscad.HelixPosAngles(grid, helices, 'honeycomb');
     // return toscad.helixPosCrossover(grid);
 }
@@ -138,24 +179,103 @@ function normalizeHelixPosMap(input: any): Map<number, [number, number]> | null 
     return null;
 }
 
-async function exportScadnanoWithHelixPos(name: string, gridType: ScadnanoGridType, helixPos: Map<number, [number, number]>) {
+function exportScadnanoWithHelixPos(name: string, gridType: ScadnanoGridType, helixPos: Map<number, [number, number]>) {
     const latticeType: ScadnanoGridType = gridType === 'honeycomb' ? 'honeycomb' : 'square';
-    const { helices, grid } = await prepareScadnanoLayout(latticeType);
+    const { helices, grid } = prepareScadnanoLayout(latticeType);
 
     const scadnano = toscad.buildScadnano2(grid, helices, gridType, helixPos);
     const fileName = name ? `${name}.sc` : 'output.sc';
     makeTextFile(fileName, JSON.stringify(scadnano, null, 2));
 }
 
-async function exportScadnanoNoPos(name: string, gridType: ScadnanoGridType) {
-    const { helices, grid } = await prepareScadnanoLayout('square');
+function exportScadnanoNoPos(name: string, gridType: ScadnanoGridType) {
+    const latticeType: ScadnanoGridType = gridType === 'honeycomb' ? 'honeycomb' : 'square';
+    const { helices, grid } = prepareScadnanoLayout(latticeType);
 
     const scadnano = toscad.buildScadnano2(grid, helices, gridType);
     const fileName = name ? `${name}.sc` : 'output.sc';
     makeTextFile(fileName, JSON.stringify(scadnano, null, 2));
 }
 
-async function scadnanoDialogExport() {
+function runScadnanoLongCalculation(calc: () => void, callback?: () => void) {
+    const viewObj = (window as any).view;
+    if (viewObj && typeof viewObj.longCalculation === 'function') {
+        viewObj.longCalculation(calc, 'Preparing scadnano export, please be patient...', callback);
+        return;
+    }
+
+    calc();
+    if (callback) callback();
+}
+
+function closeScadnanoDialog() {
+    let closedByMetro = false;
+    const metroDialog = (window as any)?.Metro?.dialog;
+    if (metroDialog && typeof metroDialog.close === 'function') {
+        try {
+            metroDialog.close('#scadnanoDialog');
+            closedByMetro = true;
+        } catch (err) {
+            console.warn('Failed to close scadnano dialog via Metro API:', err);
+        }
+    }
+
+    if (!closedByMetro) {
+        const closeBtn = document.querySelector('#scadnanoDialog .js-dialog-close') as HTMLElement | null;
+        if (closeBtn) {
+            closeBtn.click();
+        }
+    }
+
+    const dialogEl = document.getElementById('scadnanoDialog') as HTMLElement | null;
+    if (dialogEl) {
+        dialogEl.classList.remove('open');
+        dialogEl.setAttribute('aria-hidden', 'true');
+        dialogEl.style.display = 'none';
+    }
+}
+
+function runScadnanoDialogExport(name: string, gridType: ScadnanoGridType, includeHelixPos: boolean) {
+    if (!includeHelixPos) {
+        let failed = false;
+        runScadnanoLongCalculation(() => {
+            try {
+                exportScadnanoNoPos(name, gridType);
+            } catch (err) {
+                failed = true;
+                notify(`Scadnano export failed: ${err}`, 'alert');
+            }
+        });
+        if (failed) return;
+        return;
+    }
+
+    let failed = false;
+    let helixPos: Map<number, [number, number]> | null = null;
+
+    runScadnanoLongCalculation(
+        () => {
+            try {
+                helixPos = calculateScadnanoHelixPos(gridType);
+                (window as any).currentScadnanoHelixPos = cloneHelixPosMap(helixPos);
+            } catch (err) {
+                failed = true;
+                notify(`Scadnano export failed: ${err}`, 'alert');
+            }
+        },
+        () => {
+            if (failed || !helixPos) return;
+            const showGrid = (window as any).showScadnanoGridFromHelixPos;
+            if (typeof showGrid !== 'function') {
+                notify('Scadnano grid view is unavailable in this page.', 'alert');
+                return;
+            }
+            showGrid(helixPos, gridType);
+        }
+    );
+}
+
+function scadnanoDialogExport() {
     const nameInput = document.getElementById('scadnanoFilename') as HTMLInputElement | null;
     const helixPosCheckbox = document.getElementById('scadnanoIncludeHPos') as HTMLInputElement | null;
     const scadnanoGrid = document.getElementById('scadnanoGrid') as HTMLInputElement | null;
@@ -169,30 +289,15 @@ async function scadnanoDialogExport() {
     const name = nameInput.value.trim() || 'output';
     const gridType = scadnanoGrid.value === 'honeycomb' ? 'honeycomb' : 'square';
 
-    if (!helixPosCheckbox.checked) {
-        try {
-            await exportScadnanoNoPos(name, gridType);
-        } catch (err) {
-            notify(`Scadnano export failed: ${err}`, 'alert');
-        }
-        return;
-    }
-
-    try {
-        const helixPos = await calculateScadnanoHelixPos(gridType);
-        (window as any).currentScadnanoHelixPos = helixPos;
-        const showGrid = (window as any).showScadnanoGridFromHelixPos;
-        if (typeof showGrid !== 'function') {
-            notify('Scadnano grid view is unavailable in this page.', 'alert');
-            return;
-        }
-        showGrid(helixPos, gridType);
-    } catch (err) {
-        notify(`Scadnano export failed: ${err}`, 'alert');
-    }
+    closeScadnanoDialog();
+    requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+            runScadnanoDialogExport(name, gridType, helixPosCheckbox.checked);
+        });
+    });
 }
 
-(window as any).exportScadnanoFromGridView = async function (helixPosInput?: any) {
+(window as any).exportScadnanoFromGridView = function (helixPosInput?: any) {
     const nameInput = document.getElementById('scadnanoFilename') as HTMLInputElement | null;
     const scadnanoGrid = document.getElementById('scadnanoGrid') as HTMLInputElement | null;
 
@@ -206,7 +311,7 @@ async function scadnanoDialogExport() {
     }
 
     try {
-        await exportScadnanoWithHelixPos(name, gridType, map);
+        exportScadnanoWithHelixPos(name, gridType, map);
     } catch (err) {
         notify(`Scadnano export failed: ${err}`, 'alert');
     }
@@ -252,13 +357,18 @@ function publishCurrentHelixPosFromEditor() {
     (window as any).currentScadnanoHelixPos = mapFromEditorNodes(scadnanoGridEditor);
 }
 
-async function ensureScadnanoHelicesCache(): Promise<Nucleotide[][] | null> {
+function ensureScadnanoHelicesCache(): Nucleotide[][] | null {
     if (currentScadnanoHelices && currentScadnanoHelices.length > 0) {
         return currentScadnanoHelices;
     }
 
+    if (currentScadnanoLayout && currentScadnanoLayout.helices.length > 0) {
+        currentScadnanoHelices = currentScadnanoLayout.helices;
+        return currentScadnanoHelices;
+    }
+
     try {
-        currentScadnanoHelices = await calculateScadnanoHelices();
+        currentScadnanoHelices = calculateScadnanoHelices();
         return currentScadnanoHelices;
     } catch (err) {
         notify(`Unable to map grid helix selection: ${err}`, 'warning');
@@ -266,8 +376,8 @@ async function ensureScadnanoHelicesCache(): Promise<Nucleotide[][] | null> {
     }
 }
 
-async function selectHelixFromGridNode(helixId: number) {
-    const helices = await ensureScadnanoHelicesCache();
+function selectHelixFromGridNode(helixId: number) {
+    const helices = ensureScadnanoHelicesCache();
     if (!helices) return;
 
     const helix = helices[helixId];
@@ -306,7 +416,7 @@ function ensureScadnanoGridEditor(gridType: ScadnanoGridType): any | null {
     scadnanoGridEditor.onNodeSelected = (node: any) => {
         const helixId = Number(node?.id);
         if (!Number.isFinite(helixId)) return;
-        void selectHelixFromGridNode(helixId);
+        selectHelixFromGridNode(helixId);
     };
     return scadnanoGridEditor;
 }

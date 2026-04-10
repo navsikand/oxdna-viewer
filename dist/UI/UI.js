@@ -461,6 +461,7 @@ class View {
     bbconnectorScale = 1;
     constructor(doc) {
         this.doc = doc;
+        window.view = this;
         // Initialise toggle groups
         this.coloringMode = new ToggleGroup('coloringMode', doc, () => { updateColoring(); });
         this.centeringMode = new ToggleGroupWithDisable('centering', doc, 'Origin', 'None');
@@ -966,6 +967,7 @@ class View {
     }
 }
 let view = new View(document);
+window.view = view;
 // This Class is basically a giant container to deal with all the graphing for the FluctuationWindow
 class fluxGraph {
     title;

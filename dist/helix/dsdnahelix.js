@@ -1046,7 +1046,7 @@ var honda;
     // 	let {ssdna, deadfishies, longssScaffold} = ssdnaPartials(fishies);
     // 	let ssScaffold = longssScaffoldfunc(longssScaffold);
     // }
-    async function findHelices(inputMap, tolerance = 2) {
+    function findHelices(inputMap, tolerance = 2) {
         findBasepairsOptim2();
         dropIntraStrandPairs();
         // ok now we can do the rest of the stuff.

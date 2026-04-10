@@ -1105,7 +1105,7 @@ namespace honda {
 	// 	let ssScaffold = longssScaffoldfunc(longssScaffold);
 	// }
 
-	export async function findHelices(inputMap: Map<number, Nucleotide>, tolerance = 2) {
+	export function findHelices(inputMap: Map<number, Nucleotide>, tolerance = 2) {
 		findBasepairsOptim2();
 		dropIntraStrandPairs();
 		// ok now we can do the rest of the stuff.
