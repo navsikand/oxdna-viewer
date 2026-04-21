@@ -558,13 +558,13 @@ function findBasepairsOptimwA2(min_length = 0) {
             // Convert each metric into an error-like term where lower is better.
             // const distTerm = dist / CUTOFF_DIST;
             const distTerm = 1;
-            const a1Term = 1 + a1Dot; // ideal antiparallel a1Dot ~ -1 => 0
-            // const a1Term = 1;
+            // const a1Term = 1 + a1Dot; // ideal antiparallel a1Dot ~ -1 => 0
+            const a1Term = 1;
             const terms = [distTerm, a1Term];
-            // if (USE_A2_IN_RMSD) {
-            //     const a2Term = 1 - a2Dot; // ideal parallel a2Dot ~ 1 => 0
-            //     terms.push(a2Term);
-            // }
+            if (USE_A2_IN_RMSD) {
+                const a2Term = 1 - a2Dot; // ideal parallel a2Dot ~ 1 => 0
+                terms.push(a2Term);
+            }
             const sumSq = terms.reduce((acc, t) => acc + t * t, 0);
             return Math.sqrt(sumSq / terms.length);
         };

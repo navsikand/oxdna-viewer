@@ -395,6 +395,7 @@ var honda;
         // Hence, helices.flat().length and ssdna.flat().length should be the full size of the structure. For any missing piece, check murdered[].
         const helices = [];
         // guys for context murdered[] basically are the dumb nucleotides that couldnt be placed into helices due to fraying and angle conflicts.
+        // Stored as segments so grouped leftovers (e.g. deferred ssScaffold segments) stay together.
         // #theyDeserveIt
         const murdered = [];
         if (!partials.length)
@@ -462,9 +463,6 @@ var honda;
             }
             return vec;
         };
-        // https://www.youtube.com/watch?v=ayW5B2W9hfo
-        // hopefully i remember to delete the youtube link before i commit or publish this lmao
-        // is this O(logN) or O(N)??
         const totalNodes = partials.length + deadfishies.length;
         const parent = Array.from({ length: totalNodes }, (_, i) => i);
         const find = (x) => (parent[x] === x ? x : parent[x] = find(parent[x]));
@@ -515,7 +513,7 @@ var honda;
                 vecB = getDeadfishyA3(b.index);
             if (!vecA || !vecB)
                 return false;
-            return vecA.dot(vecB) > 0;
+            return vecA.dot(vecB) > 0.5;
         };
         // Only connect nodes that are adjacent on the same strand and whose A3 vectors align.
         systems.forEach(system => {
@@ -637,7 +635,7 @@ var honda;
             const node = partials.length + idx;
             const root = find(node);
             if (!groups.has(root)) {
-                murdered.push(nt);
+                murdered.push([nt]);
                 return;
             }
             const arr = groups.get(root) || [];
@@ -680,21 +678,7 @@ var honda;
                     idToHelix.set(nt.id, targetIdx);
                 });
             };
-            // // Unnecessary. Might actually just remove this part later.
-            // const mergeHelices = (targetIdx: number, sourceIdx: number) => {
-            // 	if (targetIdx === sourceIdx) return;
-            // 	const source = helices[sourceIdx];
-            // 	if (!source.length) return;
-            // 	addToHelix(targetIdx, source);
-            // 	helices[sourceIdx] = [];
-            // };
-            // very unnecessarily, copilot has added logic so that if a ssScaffold segment connects to multiple helices, they get merged together.
-            // is this even good? Does it cause problems instead of solving them? 
-            // it is currently not causing issues AND it is not solving anything either, so whatever.
-            // This part does the good stuff too, so dont just delete this lol.
-            ssScaffold.forEach(segment => {
-                if (!segment.length)
-                    return;
+            const findSsScaffoldTargets = (segment) => {
                 const segmentIds = new Set(segment.map(nt => nt.id));
                 const helixIndices = new Set();
                 segment.forEach(nt => {
@@ -711,23 +695,54 @@ var honda;
                             helixIndices.add(hIdx);
                     }
                 });
-                const targets = Array.from(helixIndices.values());
-                if (!targets.length)
-                    return;
-                // IN CASE that the ssScaffold segment connects to multiple helices, warn the user.
-                // This should NEVER happen, since the longssScaffold segments get divided into equal halves before being processed here...
-                if (targets.length > 1) {
-                    console.warn('ssScaffold segment connects to multiple helices; attaching to first.', {
-                        helices: targets,
-                        segmentLength: segment.length
+                return Array.from(helixIndices.values());
+            };
+            let pending = ssScaffold.filter(segment => segment.length > 0);
+            const maxRounds = Math.max(1, pending.length * 2);
+            let round = 0;
+            while (pending.length) {
+                round += 1;
+                let attachedThisRound = 0;
+                const nextPending = [];
+                pending.forEach(segment => {
+                    const targets = findSsScaffoldTargets(segment);
+                    if (!targets.length) {
+                        nextPending.push(segment);
+                        return;
+                    }
+                    // IN CASE that the ssScaffold segment connects to multiple helices, warn the user.
+                    if (targets.length > 1) {
+                        console.warn('ssScaffold segment connects to multiple helices; attaching to first.', {
+                            helices: targets,
+                            segmentLength: segment.length,
+                            round
+                        });
+                    }
+                    const primary = targets[0];
+                    addToHelix(primary, segment);
+                    attachedThisRound += 1;
+                });
+                if (!nextPending.length)
+                    break;
+                if (!attachedThisRound) {
+                    console.warn('[ssScaffold] No attach progress in retry round; moving unresolved segments to murdered as grouped segments.', {
+                        round,
+                        unresolvedSegments: nextPending.length
                     });
+                    nextPending.forEach(segment => murdered.push(segment.slice()));
+                    break;
                 }
-                const primary = targets[0];
-                // for (let i = 1; i < targets.length; i++) {
-                // 	mergeHelices(primary, targets[i]);
-                // }
-                addToHelix(primary, segment);
-            });
+                if (round >= maxRounds) {
+                    console.warn('[ssScaffold] Retry limit reached; moving unresolved segments to murdered as grouped segments.', {
+                        round,
+                        unresolvedSegments: nextPending.length,
+                        maxRounds
+                    });
+                    nextPending.forEach(segment => murdered.push(segment.slice()));
+                    break;
+                }
+                pending = nextPending;
+            }
         }
         const partialToHelix = new Map();
         helices.forEach((list, hIdx) => {
@@ -977,17 +992,16 @@ var honda;
             if (newHelix.length)
                 helices.push(newHelix);
         });
-        // This is the code to re-attach murdered[] nts to the closest helix by partial connection (n5/n3).
-        // murdered[] nts are the ones that got rejected from everything so far, but they still belong to the structure somehow...
-        // "obviously", they belong to the closest helix!!! What could go wrong?
+        // This is the code to re-attach murdered[] segments to the closest helix by partial connection (n5/n3).
+        // For grouped segments (e.g. deferred ssScaffold), we attach the full segment to one chosen helix.
         if (murdered.length && helices.length) {
             const idToHelix = new Map();
             helices.forEach((list, idx) => {
                 list.forEach(nt => idToHelix.set(nt.id, idx));
             });
-            const walkToHelix = (start, dir) => {
+            const walkToHelix = (start, dir, owner) => {
                 if (!start) {
-                    console.warn('Tried to find the nearest connected helix, but start was', start);
+                    console.warn('[walkToHelix] Side', dir, 'is null for nucleotide', owner.id, '; using opposite side if available.');
                     return null;
                 }
                 let curr = start;
@@ -998,42 +1012,72 @@ var honda;
                         return { helixIdx: hIdx, anchor: curr };
                     curr = curr[dir];
                 }
-                console.warn('Tried to find the nearest connected helix, but could not find any');
-                console.log('Problematic nucleotide:', start);
+                console.warn('[walkToHelix] Side', dir, 'for nucleotide', owner.id, 'started at', start.id, 'but did not reach any existing helix.');
                 return null;
             };
-            const remaining = [];
-            murdered.forEach(nt => {
-                const via5 = walkToHelix((nt.n5 ?? null), 'n5');
-                const via3 = walkToHelix((nt.n3 ?? null), 'n3');
-                // hopefully they are connected to the structure, otherwise its a relaxation issue (probably).
-                if (!via5 && !via3) {
-                    remaining.push(nt);
-                    return;
-                }
-                let target = via5 || via3;
-                // if the murdered nucleotide is connected to helices on both sides to 2 different helices, then 
-                // it will pick the closest one.
-                if (via5 && via3) {
+            const addMurderedSegmentToHelix = (targetIdx, segment) => {
+                const helix = helices[targetIdx];
+                if (!helix)
+                    return false;
+                const seen = new Set(helix.map(nt => nt.id));
+                segment.forEach(nt => {
+                    if (seen.has(nt.id))
+                        return;
+                    helix.push(nt);
+                    seen.add(nt.id);
+                    idToHelix.set(nt.id, targetIdx);
+                });
+                return true;
+            };
+            const pickSegmentTarget = (segment) => {
+                let best = null;
+                segment.forEach(nt => {
+                    const via5 = walkToHelix((nt.n5 ?? null), 'n5', nt);
+                    const via3 = walkToHelix((nt.n3 ?? null), 'n3', nt);
+                    if (!via5 && via3) {
+                        console.log('[walkToHelix] Nucleotide', nt.id, ': n5 lookup failed; using n3 fallback candidate to helix', via3.helixIdx, 'via anchor', via3.anchor.id);
+                    }
+                    if (!via3 && via5) {
+                        console.log('[walkToHelix] Nucleotide', nt.id, ': n3 lookup failed; using n5 fallback candidate to helix', via5.helixIdx, 'via anchor', via5.anchor.id);
+                    }
+                    if (!via5 && !via3) {
+                        console.warn('[walkToHelix] Nucleotide', nt.id, ': both n5 and n3 lookups failed while resolving segment target.');
+                        return;
+                    }
                     const pos = nt.getPos();
-                    const d5 = pos.distanceTo(via5.anchor.getPos());
-                    const d3 = pos.distanceTo(via3.anchor.getPos());
-                    target = d5 <= d3 ? via5 : via3;
-                }
-                // oops has happened
+                    const consider = (hit) => {
+                        const distance = pos.distanceTo(hit.anchor.getPos());
+                        if (!best || distance < best.distance) {
+                            best = { hit, distance };
+                        }
+                    };
+                    if (via5)
+                        consider(via5);
+                    if (via3)
+                        consider(via3);
+                });
+                return best ? best.hit : null;
+            };
+            const remaining = [];
+            murdered.forEach(segment => {
+                if (!segment.length)
+                    return;
+                const target = pickSegmentTarget(segment);
                 if (!target) {
-                    remaining.push(nt);
+                    console.warn('[walkToHelix] Could not resolve target helix for murdered segment; keeping grouped segment in murdered.', {
+                        segmentLength: segment.length,
+                        segmentIds: segment.map(nt => nt.id)
+                    });
+                    remaining.push(segment);
                     return;
                 }
-                const helix = helices[target.helixIdx];
-                if (!helix) {
-                    remaining.push(nt);
+                if (!addMurderedSegmentToHelix(target.helixIdx, segment)) {
+                    remaining.push(segment);
                     return;
                 }
-                helix.push(nt);
-                idToHelix.set(nt.id, target.helixIdx);
+                console.log('[walkToHelix] Attached murdered segment to helix', target.helixIdx, 'segmentLength', segment.length);
             });
-            // push the remaining nts back to murdered[].
+            // push the remaining grouped segments back to murdered[].
             murdered.length = 0;
             murdered.push(...remaining);
         }

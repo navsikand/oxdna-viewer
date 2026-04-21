@@ -393,7 +393,7 @@ namespace honda {
 						if (nodeA && nodeB && (nodeA.kind !== nodeB.kind || nodeA.index !== nodeB.index)) {
 							const a1Prev = prev.getA1().clone().normalize();
 							const a1Nt = nt.getA1().clone().normalize();
-							if (a1Prev.dot(a1Nt) > 0.5) {
+							if (a1Prev.dot(a1Nt) > 0.3) {
 								if (nodeA.kind === 'partial' && nodeB.kind === 'partial') {
 									addEndpointLink(prev, nodeB.index);
 									addEndpointLink(nt, nodeA.index);

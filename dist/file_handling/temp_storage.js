@@ -6,7 +6,7 @@ async function generateAndStoreCurrentStructure() {
         const { file: topFileContent } = window.makeTopFile(name, newElementIDs, newStrandIds, gsSubtypes, counts, true);
         const { file: datFileContent } = window.makeDatFile(name, newElementIDs);
         await window.DexieDB.temporaryStructure.put({
-            id: "currentStructure",
+            id: "currentStructure", // Fixed ID to ensure overwrite
             topFile: topFileContent,
             datFile: datFileContent,
         });
