@@ -258,7 +258,7 @@ class ScadnanoExportManager {
             }
         });
 
-        const helices = honda.findHelices(nucleotideElements, 3) as Nucleotide[][];
+        const helices = helix.findHelices(nucleotideElements, 3) as Nucleotide[][];
         this.notifyHelixCoverageMismatch(helices, nucleotideElements);
         return helices;
     }

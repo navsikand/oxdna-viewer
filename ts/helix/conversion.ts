@@ -5,7 +5,7 @@
 /*
 Here's an easy way to use this code:
 
-    const helices = await honda.findHelices(nucleotideElements, 3);
+    const helices = await helix.findHelices(nucleotideElements, 3);
     const { grid, binderHelices } = toscad.setGrid(helices);
     toscad.directionAlign2(grid);
     toscad.alignGridPrim(grid, binderHelices);
@@ -93,7 +93,7 @@ namespace toscad {
     };
 
     export function showHelixEndpoints(helices: Nucleotide[][]) {
-        // const helices = await honda.findHelices(elements, 2);
+        // const helices = await helix.findHelices(elements, 2);
         const endpoints = helices.map((helix, i) => {
             const res = helixEndpoints(helix);
             return {

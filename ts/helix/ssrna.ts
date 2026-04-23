@@ -35,7 +35,7 @@ elements.forEach(nt=>{
 // For even easier use, just run:
 // let helices = await airport.findHelices(elements, 2);
 
-namespace honda {
+namespace helix {
 	// // helper function cuz didnt want to type this every time
 	// export function checkAngle(n1: Nucleotide | null = null, n2: Nucleotide | null = null) {
 	// 	if (!n1 || !n2) return 0;

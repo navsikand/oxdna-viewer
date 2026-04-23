@@ -5,11 +5,11 @@
 /* 
 // for ease of use, and to prevent dumb mistakes as I code and test things out, here is exactly the commands to use this in console:
 findBasepairs3(); // use 3 because there are 2 versions of findBasepairs, and 3 is the fastest. Dont ask why i named it that.
-honda.dropIntraStrandPairs();
-let {partials, fishies} = honda.findHelixPartials(elements, 2);
-let {ssdna, deadfishies, longssScaffold} = honda.ssdnaPartials(fishies);
-let ssScaffold = honda.longssScaffoldfunc(longssScaffold, deadfishies);
-let {helices, murdered, binders, binder2, disconnected, unhandled} = honda.generateHelix(partials, ssdna, ssScaffold, deadfishies);
+helix.dropIntraStrandPairs();
+let {partials, fishies} = helix.findHelixPartials(elements, 2);
+let {ssdna, deadfishies, longssScaffold} = helix.ssdnaPartials(fishies);
+let ssScaffold = helix.longssScaffoldfunc(longssScaffold, deadfishies);
+let {helices, murdered, binders, binder2, disconnected, unhandled} = helix.generateHelix(partials, ssdna, ssScaffold, deadfishies);
 // and helices are what you want!
 // This code has been completed (polishing required but sure).
 // After running this, check for helix.flat().length == elements.size
@@ -33,9 +33,9 @@ elements.forEach(nt=>{
 */
 
 // For even easier use, just run:
-// let helices = await honda.findHelices(elements, 2);
+// let helices = await helix.findHelices(elements, 2);
 
-namespace honda {
+namespace helix {
 	// helper function cuz didnt want to type this every time
 	export function checkAngle(n1: Nucleotide | null = null, n2: Nucleotide | null = null) {
 		if (!n1 || !n2) return 0;
@@ -75,6 +75,7 @@ namespace honda {
 
 	// Finds helix parts using destructive consumption of a working copy of elements (called mermaid).
 	// tolerance 2 is good enough for most cases. Higher tolerances seem to have no negative consequences, however.
+	// TODO: Make this more readable by surmising the termination conditions into a single helper function instead of scattering tryDirection calls everywhere. Maybe even rewrite the whole thing in a more intuitive way.
 	export function findHelixPartials(inputMap: Map<number, Nucleotide>, tolerance = 2) {
 		const mermaid = new Map<number, Nucleotide>(inputMap);
 		const mermaid2 = new Map<number, Nucleotide>(inputMap); // backup copy for duplication, used later
@@ -232,37 +233,6 @@ namespace honda {
 			// // Drop empty partial lists
 			partials = partials.filter(helix => helix.length > 0);
 		}
-
-		// Remove any nucleotide that is part of a multi-pairing (2+ nts paired to the same nt)
-		// dang it. This doesnt work either, specificially at the ends of the helices, where the fraying causes multi-pairing.
-		// const pairedTo = new Map<number, number[]>();
-		// mermaid2.forEach(nt => {
-		// 	if (!nt.pair) return;
-		// 	const list = pairedTo.get(nt.pair.id) || [];
-		// 	list.push(nt.id);
-		// 	pairedTo.set(nt.pair.id, list);
-		// });
-
-		// const multiPairIds = new Set<number>();
-		// pairedTo.forEach((list, targetId) => {
-		// 	if (list.length >= 2) {
-		// 		multiPairIds.add(targetId);
-		// 		list.forEach(id => multiPairIds.add(id));
-		// 	}
-		// });
-
-		// if (multiPairIds.size) {
-		// 	partials.forEach((helix, i) => {
-		// 		partials[i] = helix.filter(nt => {
-		// 			if (multiPairIds.has(nt.id)) {
-		// 				fishies.set(nt.id, nt);
-		// 				return false;
-		// 			}
-		// 			return true;
-		// 		});
-		// 	});
-		// 	partials = partials.filter(helix => helix.length > 0);
-		// }
 
 		return { partials, fishies: Array.from(fishies.values()) };
 	}
@@ -523,14 +493,22 @@ namespace honda {
 			setB.add(a);
 			partialAdj.set(b, setB);
 		};
-		const deadfishyLinks = new Map<number, Set<number>>();
-		const addDeadfishyLink = (deadNode: number, partialIdx: number) => {
-			const set = deadfishyLinks.get(deadNode) || new Set<number>();
-			set.add(partialIdx);
-			deadfishyLinks.set(deadNode, set);
+		type DeadfishyLink = {
+			partialIdx: number;
+			score: number;
+			strand: Strand;
+		};
+		const deadfishyLinks = new Map<number, Map<number, DeadfishyLink>>();
+		const addDeadfishyLink = (deadNode: number, partialIdx: number, score: number, strand: Strand) => {
+			const links = deadfishyLinks.get(deadNode) || new Map<number, DeadfishyLink>();
+			const prev = links.get(partialIdx);
+			if (!prev || score > prev.score) {
+				links.set(partialIdx, { partialIdx, score, strand });
+			}
+			deadfishyLinks.set(deadNode, links);
 		};
 
-		const canAttach = (a: NodeRef, b: NodeRef, strand: Strand) => {
+		const attachDot = (a: NodeRef, b: NodeRef, strand: Strand) => {
 			let vecA: THREE.Vector3 | null = null;
 			let vecB: THREE.Vector3 | null = null;
 
@@ -540,8 +518,8 @@ namespace honda {
 			if (b.kind === 'partial') vecB = getPartialStrandA3(b.index, strand);
 			else vecB = getDeadfishyA3(b.index);
 
-			if (!vecA || !vecB) return false;
-			return vecA.dot(vecB) > 0.5;
+			if (!vecA || !vecB) return -1;
+			return vecA.dot(vecB);
 		};
 
 		// Only connect nodes that are adjacent on the same strand and whose A3 vectors align.
@@ -560,7 +538,8 @@ namespace honda {
 							if (nodeA.kind === 'partial' && nodeB.kind === 'partial') {
 								addPartialAdj(nodeA.index, nodeB.index);
 							}
-							if (canAttach(nodeA, nodeB, strand)) {
+							const dot = attachDot(nodeA, nodeB, strand);
+							if (dot > 0.707) {
 								if (nodeA.kind === 'partial' && nodeB.kind === 'partial') {
 									// unionize the partials without question
 									unite(nodeA.node, nodeB.node);
@@ -571,7 +550,7 @@ namespace honda {
 									const otherNode = nodeA.kind === 'deadfishy' ? nodeB : nodeA;
 									// does not do anything if both nodes are deadfishies.
 									if (otherNode.kind === 'partial') {
-										addDeadfishyLink(deadNode.node, otherNode.index);
+										addDeadfishyLink(deadNode.node, otherNode.index, dot, strand);
 									}
 								}
 							}
@@ -630,21 +609,36 @@ namespace honda {
 			return false;
 		};
 
-		deadfishyLinks.forEach((partialsSet, deadNode) => {
-			const roots = new Set<number>();
-			partialsSet.forEach(pIdx => roots.add(findPartial(pIdx)));
-			if (!roots.size) return;
-			const rootsArr = Array.from(roots.values());
-			let primaryRoot = rootsArr[0];
+		const partialsCanBridge = (a: DeadfishyLink, b: DeadfishyLink) => {
+			const vecA = getPartialStrandA3(a.partialIdx, a.strand);
+			const vecB = getPartialStrandA3(b.partialIdx, b.strand);
+			if (!vecA || !vecB) return false;
+			return vecA.dot(vecB) > 0.707;
+		};
+
+		deadfishyLinks.forEach((linksByPartial, deadNode) => {
+			const candidates = Array.from(linksByPartial.values()).sort((a, b) => b.score - a.score);
+			if (!candidates.length) return;
+
+			// Deadfishy belongs to the best-aligned partial by default.
+			const primaryLink = candidates[0];
+			let primaryRoot = findPartial(primaryLink.partialIdx);
 			unite(deadNode, primaryRoot);
-			for (let i = 1; i < rootsArr.length; i++) {
-				const otherRoot = rootsArr[i];
-				if (findPartial(primaryRoot) === findPartial(otherRoot)) continue;
-				if (hasDirectConnection(findPartial(primaryRoot), findPartial(otherRoot))) {
+
+			// Bridge to additional partial groups only when the partials also align.
+			for (let i = 1; i < candidates.length; i++) {
+				const candidate = candidates[i];
+				if (!partialsCanBridge(primaryLink, candidate)) continue;
+
+				const currPrimaryRoot = findPartial(primaryRoot);
+				const otherRoot = findPartial(candidate.partialIdx);
+				if (currPrimaryRoot === otherRoot) continue;
+				if (hasDirectConnection(currPrimaryRoot, otherRoot)) {
 					continue; // block deadfishy merge across already-connected helices
 				}
+
 				unite(deadNode, otherRoot);
-				primaryRoot = mergePartialGroups(primaryRoot, otherRoot);
+				primaryRoot = mergePartialGroups(currPrimaryRoot, otherRoot);
 			}
 		});
 

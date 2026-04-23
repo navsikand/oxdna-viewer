@@ -85,7 +85,7 @@ async function uploadStructure() {
         const currentToken = localStorage.getItem("token") || "";
         const response = await fetch(`${apiRoot}/structure/createStructure`, {
             method: "POST",
-            credentials: "include", // Include refresh token cookie
+            credentials: "include",
             headers: {
                 Authorization: "Bearer " + currentToken,
                 // Do not set 'Content-Type' header when using FormData.
