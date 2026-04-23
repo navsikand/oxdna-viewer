@@ -75,9 +75,9 @@ namespace helix {
 
 	// Finds helix parts using destructive consumption of a working copy of elements (called mermaid).
 	// tolerance 2 is good enough for most cases. Higher tolerances seem to have no negative consequences, however.
-	// TODO: Make this more readable by surmising the termination conditions into a single helper function instead of scattering tryDirection calls everywhere. Maybe even rewrite the whole thing in a more intuitive way.
-	export function findHelixPartials(inputMap: Map<number, Nucleotide>, tolerance = 2) {
-		const mermaid = new Map<number, Nucleotide>(inputMap);
+	// go to terminatingConditions for what tolerance is.
+	export function findHelixPartials2(inputMap: Map<number, Nucleotide>, tolerance = 2) {
+		const mermaid = new Map<number, Nucleotide>(inputMap); // copy of the elements map
 		const mermaid2 = new Map<number, Nucleotide>(inputMap); // backup copy for duplication, used later
 		const fishies = new Map<number, Nucleotide>(); // unpaired / skipped nts
 
@@ -93,7 +93,6 @@ namespace helix {
 
 		while (true) {
 			const start = nextStart();
-			// console.log('Starting of partials:', start);
 			if (!start) break;
 
 			// Collect unpaired/binder nts for downstream ssDNA processing instead of discarding silently.
@@ -115,27 +114,27 @@ namespace helix {
 			const partial: Nucleotide[] = [];
 			const seen = new Set<number>();
 
-			const tryDirection = (dir: 1 | -1) => {
-				const nextCurr = mermaid.get(curr!.id + dir) as Nucleotide | undefined;
-				const nextAlly = mermaid.get(ally!.id - dir) as Nucleotide | undefined;
+			type DirectionStep = { nextCurr: Nucleotide; nextAlly: Nucleotide } | null;
+
+			const terminatingConditions = (baseCurr: Nucleotide, baseAlly: Nucleotide, dir: 1 | -1): DirectionStep => {
+				const nextCurr = mermaid.get(baseCurr.id + dir) as Nucleotide | undefined;
+				const nextAlly = mermaid.get(baseAlly.id - dir) as Nucleotide | undefined;
 				if (!nextCurr || !nextAlly) return null;
 				if (nextCurr.strand !== strandA || nextAlly.strand !== strandB) return null;
 
-				// Tolerance window: OR logic. Continue if ANY offset in [1, tolerance]
-				// has forward paired to backward (allows rescue by curr+2/a-2, curr+3/a-3, etc.).
-				let onwards = false;
+				// Tolerance window: OR logic. Continue if ANY offset in [1, tolerance] has forward paired to backward.
+				// (allows rescue by curr+2/a-2, curr+3/a-3, etc.).
 				for (let offset = 1; offset <= tolerance; offset++) {
-					const forward = mermaid.get(curr!.id + dir * offset) as Nucleotide | undefined;
-					const backward = mermaid.get(ally!.id - dir * offset) as Nucleotide | undefined;
+					const forward = mermaid.get(baseCurr.id + dir * offset) as Nucleotide | undefined;
+					const backward = mermaid.get(baseAlly.id - dir * offset) as Nucleotide | undefined;
 					if (!forward || !backward) continue; // check if either of them even exist.
 					if (forward.strand !== strandA || backward.strand !== strandB) continue;
 					if (forward.pair === backward) {
-						onwards = true;
-						break;
+						return { nextCurr, nextAlly };
 					}
 				}
-				if (!onwards) return null;
-				return { nextCurr, nextAlly };
+
+				return null;
 			};
 
 			// actual traversal loop.
@@ -147,7 +146,8 @@ namespace helix {
 				mermaid.delete(curr.id);
 				mermaid.delete(ally.id);
 
-				const step = tryDirection(1) || tryDirection(-1);
+				const step = terminatingConditions(curr, ally, 1) || terminatingConditions(curr, ally, -1);
+
 				if (!step) break;
 
 				// Always consume the immediate neighbors (curr+1 and a-1) even if mismatched.
@@ -180,24 +180,9 @@ namespace helix {
 				}
 			});
 		});
-		// wait lately its being doing some weird crap, lets log it out.
+
 		// had to add the multi-pairing logic (down below) to fix the problem. But still logging for curiosity.
 		console.log('Duplicates set: ', duplicates);
-
-		// const pairIds = new Set<number>();
-		// partials.forEach((helix,i) => {
-		// 	partials[i] = helix.filter(nt => {
-		// 		if (duplicates.has(nt.id) || pairIds.has(nt.id)) {
-		// 			fishies.set(nt.id, nt);
-		// 			return false;
-		// 		}
-		// 		if (nt.pair && duplicates.has(nt.pair.id)) {
-		// 			fishies.set(nt.id, nt);
-		// 			return false;
-		// 		}
-		// 		return true;
-		// 	});
-		// });
 
 		if (duplicates.size) {
 			// Collect pair ids for duplicates
@@ -230,7 +215,7 @@ namespace helix {
 				});
 			});
 
-			// // Drop empty partial lists
+			// Drop empty partial lists
 			partials = partials.filter(helix => helix.length > 0);
 		}
 
@@ -1156,7 +1141,7 @@ namespace helix {
 		findBasepairsOptim2();
 		dropIntraStrandPairs();
 		// ok now we can do the rest of the stuff.
-		let { partials, fishies } = findHelixPartials(inputMap, tolerance);
+		let { partials, fishies } = findHelixPartials2(inputMap, tolerance);
 		let { ssdna, deadfishies, longssScaffold } = ssdnaPartials(fishies);
 		let ssScaffold = longssScaffoldfunc(longssScaffold, deadfishies);
 		let { helices, murdered, binders, binder2, disconnected, unhandled } = generateHelix(partials, ssdna, ssScaffold, deadfishies);

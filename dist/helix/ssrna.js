@@ -32,7 +32,7 @@ elements.forEach(nt=>{
 // For even easier use, just run:
 // let helices = await airport.findHelices(elements, 2);
 var helix;
-(function (helix) {
+(function (helix_1) {
     // // helper function cuz didnt want to type this every time
     // export function checkAngle(n1: Nucleotide | null = null, n2: Nucleotide | null = null) {
     // 	if (!n1 || !n2) return 0;
@@ -231,7 +231,7 @@ var helix;
         // }
         return { partials, fishies: Array.from(fishies.values()) };
     }
-    helix.findrnapartials = findrnapartials;
+    helix_1.findrnapartials = findrnapartials;
     function averageA3(list) {
         if (!list.length)
             return new THREE.Vector3(0, 0, 0);
@@ -252,7 +252,7 @@ var helix;
         }
         return avg;
     }
-    helix.averageA3 = averageA3;
+    helix_1.averageA3 = averageA3;
     ;
     function averageA1(list) {
         if (!list.length)
@@ -274,7 +274,7 @@ var helix;
         }
         return avg;
     }
-    helix.averageA1 = averageA1;
+    helix_1.averageA1 = averageA1;
     ;
     function rnaseparation(fishies) {
         const not_sodead_fishies = [];
@@ -316,7 +316,7 @@ var helix;
         }
         return { not_sodead_fishies, deadfishies };
     }
-    helix.rnaseparation = rnaseparation;
+    helix_1.rnaseparation = rnaseparation;
     function rnaGenerateHelix(partials, deadfishies = []) {
         const helices = [];
         if (!partials.length)
@@ -472,5 +472,5 @@ var helix;
         });
         return { helices, eligibleEndpoints };
     }
-    helix.rnaGenerateHelix = rnaGenerateHelix;
+    helix_1.rnaGenerateHelix = rnaGenerateHelix;
 })(helix || (helix = {}));

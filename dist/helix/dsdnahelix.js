@@ -32,14 +32,14 @@ elements.forEach(nt=>{
 // For even easier use, just run:
 // let helices = await helix.findHelices(elements, 2);
 var helix;
-(function (helix) {
+(function (helix_1) {
     // helper function cuz didnt want to type this every time
     function checkAngle(n1 = null, n2 = null) {
         if (!n1 || !n2)
             return 0;
         return Math.acos(n1.getA3().dot(n2.getA3())) * (180 / Math.PI);
     }
-    helix.checkAngle = checkAngle;
+    helix_1.checkAngle = checkAngle;
     // Returns the longest strand in the system as scaffold...
     function getScaffoldStrand() {
         let maxLen = 0;
@@ -54,7 +54,7 @@ var helix;
         });
         return scaffold;
     }
-    helix.getScaffoldStrand = getScaffoldStrand;
+    helix_1.getScaffoldStrand = getScaffoldStrand;
     // Removes intra-strand pairings across the whole structure
     // ALWAYS run this function after findBasepairs3(). Very important.
     function dropIntraStrandPairs() {
@@ -72,11 +72,12 @@ var helix;
             }
         });
     }
-    helix.dropIntraStrandPairs = dropIntraStrandPairs;
+    helix_1.dropIntraStrandPairs = dropIntraStrandPairs;
     // Finds helix parts using destructive consumption of a working copy of elements (called mermaid).
     // tolerance 2 is good enough for most cases. Higher tolerances seem to have no negative consequences, however.
-    function findHelixPartials(inputMap, tolerance = 2) {
-        const mermaid = new Map(inputMap);
+    // go to terminatingConditions for what tolerance is.
+    function findHelixPartials2(inputMap, tolerance = 2) {
+        const mermaid = new Map(inputMap); // copy of the elements map
         const mermaid2 = new Map(inputMap); // backup copy for duplication, used later
         const fishies = new Map(); // unpaired / skipped nts
         let partials = [];
@@ -89,7 +90,6 @@ var helix;
         const nextStart = () => mermaid.values().next().value;
         while (true) {
             const start = nextStart();
-            // console.log('Starting of partials:', start);
             if (!start)
                 break;
             // Collect unpaired/binder nts for downstream ssDNA processing instead of discarding silently.
@@ -108,31 +108,27 @@ var helix;
             // this is the partial being built.
             const partial = [];
             const seen = new Set();
-            const tryDirection = (dir) => {
-                const nextCurr = mermaid.get(curr.id + dir);
-                const nextAlly = mermaid.get(ally.id - dir);
+            const terminatingConditions = (baseCurr, baseAlly, dir) => {
+                const nextCurr = mermaid.get(baseCurr.id + dir);
+                const nextAlly = mermaid.get(baseAlly.id - dir);
                 if (!nextCurr || !nextAlly)
                     return null;
                 if (nextCurr.strand !== strandA || nextAlly.strand !== strandB)
                     return null;
-                // Tolerance window: OR logic. Continue if ANY offset in [1, tolerance]
-                // has forward paired to backward (allows rescue by curr+2/a-2, curr+3/a-3, etc.).
-                let onwards = false;
+                // Tolerance window: OR logic. Continue if ANY offset in [1, tolerance] has forward paired to backward.
+                // (allows rescue by curr+2/a-2, curr+3/a-3, etc.).
                 for (let offset = 1; offset <= tolerance; offset++) {
-                    const forward = mermaid.get(curr.id + dir * offset);
-                    const backward = mermaid.get(ally.id - dir * offset);
+                    const forward = mermaid.get(baseCurr.id + dir * offset);
+                    const backward = mermaid.get(baseAlly.id - dir * offset);
                     if (!forward || !backward)
                         continue; // check if either of them even exist.
                     if (forward.strand !== strandA || backward.strand !== strandB)
                         continue;
                     if (forward.pair === backward) {
-                        onwards = true;
-                        break;
+                        return { nextCurr, nextAlly };
                     }
                 }
-                if (!onwards)
-                    return null;
-                return { nextCurr, nextAlly };
+                return null;
             };
             // actual traversal loop.
             while (curr && ally) {
@@ -141,7 +137,7 @@ var helix;
                 // destructive consumption. This is why we make a copy of elements, and not use the original map directly.
                 mermaid.delete(curr.id);
                 mermaid.delete(ally.id);
-                const step = tryDirection(1) || tryDirection(-1);
+                const step = terminatingConditions(curr, ally, 1) || terminatingConditions(curr, ally, -1);
                 if (!step)
                     break;
                 // Always consume the immediate neighbors (curr+1 and a-1) even if mismatched.
@@ -172,23 +168,8 @@ var helix;
                 }
             });
         });
-        // wait lately its being doing some weird crap, lets log it out.
         // had to add the multi-pairing logic (down below) to fix the problem. But still logging for curiosity.
         console.log('Duplicates set: ', duplicates);
-        // const pairIds = new Set<number>();
-        // partials.forEach((helix,i) => {
-        // 	partials[i] = helix.filter(nt => {
-        // 		if (duplicates.has(nt.id) || pairIds.has(nt.id)) {
-        // 			fishies.set(nt.id, nt);
-        // 			return false;
-        // 		}
-        // 		if (nt.pair && duplicates.has(nt.pair.id)) {
-        // 			fishies.set(nt.id, nt);
-        // 			return false;
-        // 		}
-        // 		return true;
-        // 	});
-        // });
         if (duplicates.size) {
             // Collect pair ids for duplicates
             console.log('duplicates found: ', duplicates);
@@ -218,40 +199,12 @@ var helix;
                     return true;
                 });
             });
-            // // Drop empty partial lists
+            // Drop empty partial lists
             partials = partials.filter(helix => helix.length > 0);
         }
-        // Remove any nucleotide that is part of a multi-pairing (2+ nts paired to the same nt)
-        // dang it. This doesnt work either, specificially at the ends of the helices, where the fraying causes multi-pairing.
-        // const pairedTo = new Map<number, number[]>();
-        // mermaid2.forEach(nt => {
-        // 	if (!nt.pair) return;
-        // 	const list = pairedTo.get(nt.pair.id) || [];
-        // 	list.push(nt.id);
-        // 	pairedTo.set(nt.pair.id, list);
-        // });
-        // const multiPairIds = new Set<number>();
-        // pairedTo.forEach((list, targetId) => {
-        // 	if (list.length >= 2) {
-        // 		multiPairIds.add(targetId);
-        // 		list.forEach(id => multiPairIds.add(id));
-        // 	}
-        // });
-        // if (multiPairIds.size) {
-        // 	partials.forEach((helix, i) => {
-        // 		partials[i] = helix.filter(nt => {
-        // 			if (multiPairIds.has(nt.id)) {
-        // 				fishies.set(nt.id, nt);
-        // 				return false;
-        // 			}
-        // 			return true;
-        // 		});
-        // 	});
-        // 	partials = partials.filter(helix => helix.length > 0);
-        // }
         return { partials, fishies: Array.from(fishies.values()) };
     }
-    helix.findHelixPartials = findHelixPartials;
+    helix_1.findHelixPartials2 = findHelixPartials2;
     // Groups unpaired/binder nucleotides (fishies) into ssDNA partials by strand.
     // Only contiguous runs (>2) along a strand are kept; shorter runs go to deadfishies.
     function ssdnaPartials(fishies) {
@@ -320,7 +273,7 @@ var helix;
         });
         return { ssdna, deadfishies, longssScaffold };
     }
-    helix.ssdnaPartials = ssdnaPartials;
+    helix_1.ssdnaPartials = ssdnaPartials;
     function averageA3a(list) {
         if (!list.length)
             return new THREE.Vector3(0, 0, 0);
@@ -341,7 +294,7 @@ var helix;
         }
         return avg;
     }
-    helix.averageA3a = averageA3a;
+    helix_1.averageA3a = averageA3a;
     ;
     function longssScaffoldfunc(longssScaffold, deadfishies = []) {
         const ssScaffold = [];
@@ -386,7 +339,7 @@ var helix;
         flushRun();
         return ssScaffold;
     }
-    helix.longssScaffoldfunc = longssScaffoldfunc;
+    helix_1.longssScaffoldfunc = longssScaffoldfunc;
     // let partialStrandMap = new Map<number, Map<number, Nucleotide[]>>();
     // Perfected!
     // this one uses average a3 vectors of CONNECTED strands, as opposed to average a3 vectors of the entire partial (which cancels out, due to topology).
@@ -1100,7 +1053,7 @@ var helix;
         // const finalHelices = helices.filter(h => h.length > 0);
         return { helices, murdered, binders, binder2, disconnected, unhandled };
     }
-    helix.generateHelix = generateHelix;
+    helix_1.generateHelix = generateHelix;
     // export function generateTotal(inputMap: Map<number, Nucleotide>, tolerance = 2) {
     // 	let {partials, fishies} = findHelixPartials(inputMap, tolerance);
     // 	let {ssdna, deadfishies, longssScaffold} = ssdnaPartials(fishies);
@@ -1110,7 +1063,7 @@ var helix;
         findBasepairsOptim2();
         dropIntraStrandPairs();
         // ok now we can do the rest of the stuff.
-        let { partials, fishies } = findHelixPartials(inputMap, tolerance);
+        let { partials, fishies } = findHelixPartials2(inputMap, tolerance);
         let { ssdna, deadfishies, longssScaffold } = ssdnaPartials(fishies);
         let ssScaffold = longssScaffoldfunc(longssScaffold, deadfishies);
         let { helices, murdered, binders, binder2, disconnected, unhandled } = generateHelix(partials, ssdna, ssScaffold, deadfishies);
@@ -1164,5 +1117,5 @@ var helix;
         }
         return helices;
     }
-    helix.findHelices = findHelices;
+    helix_1.findHelices = findHelices;
 })(helix || (helix = {}));
