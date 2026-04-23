@@ -1,6 +1,7 @@
 /// <reference path="../typescript_definitions/index.d.ts" />
 class ScadnanoExportManager {
     currentScadnanoHelices = null;
+    currentScadnanoMissing = [];
     currentScadnanoConnections = [];
     currentScadnanoLayout = null;
     scadnanoGridEditor = null;
@@ -191,8 +192,10 @@ class ScadnanoExportManager {
                 nucleotideElements.set(id, element);
             }
         });
-        const helices = helix.findHelices(nucleotideElements, 3);
-        this.notifyHelixCoverageMismatch(helices, nucleotideElements);
+        const result = helix.findHelices(nucleotideElements, 3);
+        const helices = result?.helices ?? [];
+        this.currentScadnanoMissing = Array.isArray(result?.missing) ? result.missing : [];
+        this.notifyHelixCoverageMismatch(helices, nucleotideElements, this.currentScadnanoMissing);
         return helices;
     }
     prepareScadnanoLayout(latticeType, forceRecompute = false) {
@@ -227,12 +230,13 @@ class ScadnanoExportManager {
         const { helixPos } = this.prepareScadnanoLayout(latticeType);
         return this.cloneHelixPosMap(helixPos);
     }
-    notifyHelixCoverageMismatch(helices, inputMap) {
+    notifyHelixCoverageMismatch(helices, inputMap, missing = []) {
         const helixCount = helices.flat().length;
         const totalCount = inputMap.size;
         if (helixCount === totalCount)
             return;
-        notify(`Helix mapping error: ${helixCount}/${totalCount} nucleotides were mapped. Scadnano conversion will be missing some nucleotides.`, 'alert', true);
+        const missingCount = missing.length || (totalCount - helixCount);
+        notify(`Helix mapping error: ${helixCount}/${totalCount} nucleotides were mapped. Missing ${missingCount} nucleotides.`, 'alert', true);
     }
     buildScadnanoConnections(crossovers) {
         const uniquePairs = new Set();
@@ -368,6 +372,19 @@ class ScadnanoExportManager {
             return;
         selectElements(helix);
     }
+    selectMissingNucleotides() {
+        this.ensureScadnanoHelicesCache();
+        if (!this.currentScadnanoMissing.length) {
+            notify('No missing nucleotides detected from helix mapping.', 'warning');
+            return;
+        }
+        const selectElements = window.api?.selectElements;
+        if (typeof selectElements !== 'function') {
+            notify('Selection API is unavailable.', 'warning');
+            return;
+        }
+        selectElements(this.currentScadnanoMissing);
+    }
     ensureScadnanoGridEditor(gridType) {
         if (this.scadnanoGridEditor && this.scadnanoGridEditorType === gridType)
             return this.scadnanoGridEditor;
@@ -413,6 +430,12 @@ class ScadnanoExportManager {
             exportBtn.addEventListener('click', () => {
                 this.publishCurrentHelixPosFromEditor();
                 this.exportFromGridView(window.currentScadnanoHelixPos);
+            });
+        }
+        const missingBtn = document.getElementById('scadnanoGridMissingBtn');
+        if (missingBtn) {
+            missingBtn.addEventListener('click', () => {
+                this.selectMissingNucleotides();
             });
         }
         const resizeHandle = document.getElementById('scadnanoGridResizeHandle');

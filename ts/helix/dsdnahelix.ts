@@ -123,7 +123,9 @@ namespace helix {
 				if (nextCurr.strand !== strandA || nextAlly.strand !== strandB) return null;
 
 				// Tolerance window: OR logic. Continue if ANY offset in [1, tolerance] has forward paired to backward.
-				// (allows rescue by curr+2/a-2, curr+3/a-3, etc.).
+				// (allows rescue by walking farther along topological neighbors on both strands).
+				let forwardCursor: Nucleotide | null = baseCurr;
+				let backwardCursor: Nucleotide | null = baseAlly;
 				for (let offset = 1; offset <= tolerance; offset++) {
 					const forward = mermaid.get(baseCurr.id + dir * offset) as Nucleotide | undefined;
 					const backward = mermaid.get(baseAlly.id - dir * offset) as Nucleotide | undefined;
@@ -299,6 +301,7 @@ namespace helix {
 		return { ssdna, deadfishies, longssScaffold };
 	}
 
+	// helper function for adding the average a3 vector in canvas. Really should not be here.
 	export function averageA3a(list: Nucleotide[]) {
 		if (!list.length) return new THREE.Vector3(0, 0, 0);
 
@@ -381,6 +384,7 @@ namespace helix {
 		// #theyDeserveIt
 		const murdered: Nucleotide[][] = [];
 		if (!partials.length) return { helices, murdered }; // surely no helices if no partials.
+		const dot = 0.707;
 
 		// quick lookup for id to partial index and deadfishies index.
 		const idToPartial = new Map<number, number>();
@@ -523,8 +527,8 @@ namespace helix {
 							if (nodeA.kind === 'partial' && nodeB.kind === 'partial') {
 								addPartialAdj(nodeA.index, nodeB.index);
 							}
-							const dot = attachDot(nodeA, nodeB, strand);
-							if (dot > 0.707) {
+							const d = attachDot(nodeA, nodeB, strand);
+							if (d > dot) {
 								if (nodeA.kind === 'partial' && nodeB.kind === 'partial') {
 									// unionize the partials without question
 									unite(nodeA.node, nodeB.node);
@@ -535,7 +539,7 @@ namespace helix {
 									const otherNode = nodeA.kind === 'deadfishy' ? nodeB : nodeA;
 									// does not do anything if both nodes are deadfishies.
 									if (otherNode.kind === 'partial') {
-										addDeadfishyLink(deadNode.node, otherNode.index, dot, strand);
+										addDeadfishyLink(deadNode.node, otherNode.index, d, strand);
 									}
 								}
 							}
@@ -1145,6 +1149,7 @@ namespace helix {
 		let { ssdna, deadfishies, longssScaffold } = ssdnaPartials(fishies);
 		let ssScaffold = longssScaffoldfunc(longssScaffold, deadfishies);
 		let { helices, murdered, binders, binder2, disconnected, unhandled } = generateHelix(partials, ssdna, ssScaffold, deadfishies);
+		const missing: Nucleotide[] = [];
 		console.log("Helices size:", helices.flat().length);
 		console.log("Total elements:", inputMap.size);
 		if (helices.flat().length !== inputMap.size) {
@@ -1152,9 +1157,12 @@ namespace helix {
 			const helixIds = new Set<number>();
 			helices.forEach(list => list.forEach(nt => helixIds.add(nt.id)));
 
-			const missing: number[] = [];
+			const missingIds: number[] = [];
 			inputMap.forEach((nt) => {
-				if (!helixIds.has(nt.id)) missing.push(nt.id);
+				if (!helixIds.has(nt.id)) {
+					missing.push(nt);
+					missingIds.push(nt.id);
+				}
 			});
 
 			const listHits = new Map<number, Set<string>>();
@@ -1172,7 +1180,7 @@ namespace helix {
 				}
 			};
 
-			const missingSet = new Set<number>(missing);
+			const missingSet = new Set<number>(missingIds);
 			addHits('partials', partials);
 			addHits('ssdna', ssdna);
 			addHits('deadfishies', deadfishies);
@@ -1183,13 +1191,13 @@ namespace helix {
 			if (unhandled) addHits('unhandled', unhandled);
 			addHits('murdered', murdered);
 
-			const report = missing.map(id => ({
+			const report = missingIds.map(id => ({
 				id,
 				lists: Array.from(listHits.get(id) || [])
 			}));
-			console.log('Missing nucleotide IDs:', missing);
+			console.log('Missing nucleotide IDs:', missingIds);
 			console.log('Missing membership report:', report);
 		}
-		return helices;
+		return { helices, missing };
 	}
 }
