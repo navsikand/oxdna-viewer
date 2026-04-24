@@ -372,31 +372,41 @@ namespace helix {
 		return ssScaffold;
 	}
 
-	// let partialStrandMap = new Map<number, Map<number, Nucleotide[]>>();
+	type DeadfishyLink = {
+		partialIdx: number;
+		score: number;
+		strand: Strand;
+	};
 
-	// Perfected!
-	// this one uses average a3 vectors of CONNECTED strands, as opposed to average a3 vectors of the entire partial (which cancels out, due to topology).
-	export function generateHelix(partials: Nucleotide[][], ssdna: Nucleotide[][], ssScaffold: Nucleotide[][], stubs: Nucleotide[]) {
-		// Currently uses partials, ssScaffold and stubs to build perfect (almost) helices.
-		// Hence, helices.flat().length and ssdna.flat().length should be the full size of the structure. For any missing piece, check lastScraps[].
-		const helices: Nucleotide[][] = [];
-		// guys for context lastScraps[] basically are the dumb nucleotides that couldnt be placed into helices due to fraying and angle conflicts.
-		// Stored as segments so grouped leftovers (e.g. deferred ssScaffold segments) stay together.
-		// #theyDeserveIt
-		const lastScraps: Nucleotide[][] = [];
-		if (!partials.length) return { helices, lastScraps }; // surely no helices if no partials.
+	type DeadfishyQueueItem = {
+		deadNode: number;
+		linksByPartial: Map<number, DeadfishyLink>;
+	};
+
+	export type DirectConnectionState = {
+		parent: number[];
+		idToPartial: Map<number, number>;
+		idToDeadfishy: Map<number, number>;
+		partialAdj: Map<number, Set<number>>;
+		deadfishyLinks: DeadfishyQueueItem[];
+		getPartialStrandA3: (partialIdx: number, strand: Strand) => THREE.Vector3 | null;
+		find: (x: number) => number;
+		unite: (a: number, b: number) => void;
+	};
+
+	export function directConnections(partials: Nucleotide[][], stubs: Nucleotide[], globalSystems: any = systems): DirectConnectionState {
+		// Dot product threshold (45 degrees should be good)
+		// Does NOT work for px-crossover lattices
 		const dot = 0.707;
 
-		// quick lookup for id to partial index and stubs index.
 		const idToPartial = new Map<number, number>();
 		partials.forEach((list, idx) => {
 			list.forEach(nt => idToPartial.set(nt.id, idx));
 		});
 		const idToDeadfishy = new Map<number, number>();
 		stubs.forEach((nt, idx) => idToDeadfishy.set(nt.id, idx));
-		console.log('ID to Partial Map:', idToPartial); // lets check out what the map looks like
-		console.log('ID to Deadfishy Map:', idToDeadfishy);
 
+		// helper function
 		const averageA3 = (list: Nucleotide[]) => {
 			if (!list.length) return null;
 			const acc = new THREE.Vector3(0, 0, 0);
@@ -408,8 +418,7 @@ namespace helix {
 			return acc.divideScalar(len);
 		};
 
-		// within a partial, find the nts that belong to a specific strand within a specific partial. 
-		// these will the ones used for finding the average a3 vector, which will later be used for connecting partials.
+		// These are the nucleotides in each partial whose A3 vectors will be averaged for partial's orientation.
 		const partialStrandMap = new Map<number, Map<number, Nucleotide[]>>();
 		const getPartialStrandNts = (partialIdx: number, strand: Strand) => {
 			let byStrand = partialStrandMap.get(partialIdx);
@@ -425,7 +434,6 @@ namespace helix {
 			return list;
 		};
 
-		// similar to above, but caches average a3 vectors for each partial-strand combo instead of just nucleotide lists.
 		const partialStrandA3 = new Map<number, Map<number, THREE.Vector3 | null>>();
 		const getPartialStrandA3 = (partialIdx: number, strand: Strand) => {
 			let byStrand = partialStrandA3.get(partialIdx);
@@ -442,7 +450,7 @@ namespace helix {
 			return vec;
 		};
 
-		// stubs are just single nts, so caching their a3 vectors is simpler.
+		// The A3 for stubs. 
 		const deadfishyA3 = new Map<number, THREE.Vector3>();
 		const getDeadfishyA3 = (idx: number) => {
 			let vec = deadfishyA3.get(idx);
@@ -463,7 +471,6 @@ namespace helix {
 		};
 
 		type NodeRef = { node: number; kind: 'partial' | 'deadfishy'; index: number };
-		// convert a nucleotide to its corresponding node reference (partial or deadfishy)...
 		const getNodeRef = (nt: Nucleotide): NodeRef | null => {
 			const partialId = idToPartial.get(nt.id);
 			if (partialId !== undefined) return { node: partialId, kind: 'partial', index: partialId };
@@ -472,7 +479,6 @@ namespace helix {
 			return null;
 		};
 
-		// Track direct adjacency between partials and collect deadfishy links for a second pass.
 		const partialAdj = new Map<number, Set<number>>();
 		const addPartialAdj = (a: number, b: number) => {
 			if (a === b) return;
@@ -483,19 +489,15 @@ namespace helix {
 			setB.add(a);
 			partialAdj.set(b, setB);
 		};
-		type DeadfishyLink = {
-			partialIdx: number;
-			score: number;
-			strand: Strand;
-		};
-		const deadfishyLinks = new Map<number, Map<number, DeadfishyLink>>();
+
+		const deadfishyLinksMap = new Map<number, Map<number, DeadfishyLink>>();
 		const addDeadfishyLink = (deadNode: number, partialIdx: number, score: number, strand: Strand) => {
-			const links = deadfishyLinks.get(deadNode) || new Map<number, DeadfishyLink>();
+			const links = deadfishyLinksMap.get(deadNode) || new Map<number, DeadfishyLink>();
 			const prev = links.get(partialIdx);
 			if (!prev || score > prev.score) {
 				links.set(partialIdx, { partialIdx, score, strand });
 			}
-			deadfishyLinks.set(deadNode, links);
+			deadfishyLinksMap.set(deadNode, links);
 		};
 
 		const attachDot = (a: NodeRef, b: NodeRef, strand: Strand) => {
@@ -512,33 +514,27 @@ namespace helix {
 			return vecA.dot(vecB);
 		};
 
-		// Only connect nodes that are adjacent on the same strand and whose A3 vectors align.
-		systems.forEach(system => {
-			system.strands.forEach(strand => {
+		// Note that stubs don't connect 2 partials together. If a stub is between 2 partials, the partials must also align.
+		globalSystems.forEach((system: any) => {
+			system.strands.forEach((strand: Strand) => {
 				let prev: Nucleotide | null = null;
-				strand.forEach(elem => {
+				strand.forEach((elem: BasicElement) => {
 					const nt = elem as Nucleotide;
 					if (prev) {
 						const nodeA = getNodeRef(prev);
 						const nodeB = getNodeRef(nt);
 						if (nodeA && nodeB && nodeA.node !== nodeB.node) {
-							// find adjacency between partials. Reason being, this will then be used for deadfishy connection checks later.
-							// without this, funny unintended behavior CAN happen.
-							// Example scenario: comment this part out and try running this code on Dumbbell Structure (nanobase 51). Helix 34/35 will be merged, unfortunately.
 							if (nodeA.kind === 'partial' && nodeB.kind === 'partial') {
 								addPartialAdj(nodeA.index, nodeB.index);
 							}
+
 							const d = attachDot(nodeA, nodeB, strand);
 							if (d > dot) {
 								if (nodeA.kind === 'partial' && nodeB.kind === 'partial') {
-									// unionize the partials without question
 									unite(nodeA.node, nodeB.node);
 								} else if (nodeA.kind === 'deadfishy' || nodeB.kind === 'deadfishy') {
-									// if either of the nodes are stubs, then checks are necessary.
-									// add this to a "link". They will be processed in the 2nd pass. Slows down but much more accurate.
 									const deadNode = nodeA.kind === 'deadfishy' ? nodeA : nodeB;
 									const otherNode = nodeA.kind === 'deadfishy' ? nodeB : nodeA;
-									// does not do anything if both nodes are stubs.
 									if (otherNode.kind === 'partial') {
 										addDeadfishyLink(deadNode.node, otherNode.index, d, strand);
 									}
@@ -551,21 +547,55 @@ namespace helix {
 			});
 		});
 
-		// Second pass: attach stubs after partial unions are finalized.
+		const deadfishyLinks = Array.from(deadfishyLinksMap.entries()).map(([deadNode, linksByPartial]) => ({
+			deadNode,
+			linksByPartial
+		}));
+
+		return {
+			parent,
+			idToPartial,
+			idToDeadfishy,
+			partialAdj,
+			deadfishyLinks,
+			getPartialStrandA3,
+			find,
+			unite
+		};
+	}
+
+	export function makeHelices(partials: Nucleotide[][], stubs: Nucleotide[], state: DirectConnectionState) {
+		const coreHelices: Nucleotide[][] = [];
+		const initialScraps: Nucleotide[][] = [];
+
+		if (!partials.length) {
+			stubs.forEach(nt => initialScraps.push([nt]));
+			return { coreHelices, initialScraps };
+		}
+
+		// Unite partials
+		const find = (x: number): number => (state.parent[x] === x ? x : state.parent[x] = find(state.parent[x]));
+		const unite = (a: number, b: number) => {
+			const pa = find(a);
+			const pb = find(b);
+			if (pa !== pb) state.parent[pb] = pa;
+		};
+
 		const partialParent = Array.from({ length: partials.length }, (_, i) => find(i));
 		const findPartial = (x: number): number => (partialParent[x] === x ? x : partialParent[x] = findPartial(partialParent[x]));
 		const partialMembers = new Map<number, Set<number>>();
+
 		for (let i = 0; i < partials.length; i++) {
 			const root = findPartial(i);
 			const set = partialMembers.get(root) || new Set<number>();
 			set.add(i);
 			partialMembers.set(root, set);
 		}
-		// merging partials connected via a deadfishy.
+
 		const mergePartialGroups = (a: number, b: number) => {
 			let ra = findPartial(a);
 			let rb = findPartial(b);
-			if (ra === rb) return ra; // they are already united
+			if (ra === rb) return ra;
 			const setA = partialMembers.get(ra)!;
 			const setB = partialMembers.get(rb)!;
 			if (setA.size < setB.size) {
@@ -581,16 +611,16 @@ namespace helix {
 			partialParent[rb] = ra;
 			return ra;
 		};
-		// if the 2 "helices" (partial groups) are to be merged, then they can NOT have connections amongst each other. 
-		// if they do, then the one of the helix "turned around" to connect somewhere, and therefore should not be merged because it is now a different helix.
+
 		const hasDirectConnection = (rootA: number, rootB: number) => {
 			if (rootA === rootB) return true;
 			const setA = partialMembers.get(rootA);
 			const setB = partialMembers.get(rootB);
 			if (!setA || !setB) return false;
-			const [small, large] = setA.size <= setB.size ? [setA, setB] : [setB, setA];
+			const small = setA.size <= setB.size ? setA : setB;
+			const large = setA.size <= setB.size ? setB : setA;
 			for (const idx of small) {
-				const neighbors = partialAdj.get(idx);
+				const neighbors = state.partialAdj.get(idx);
 				if (!neighbors) continue;
 				for (const n of neighbors) {
 					if (large.has(n)) return true;
@@ -600,22 +630,20 @@ namespace helix {
 		};
 
 		const partialsCanBridge = (a: DeadfishyLink, b: DeadfishyLink) => {
-			const vecA = getPartialStrandA3(a.partialIdx, a.strand);
-			const vecB = getPartialStrandA3(b.partialIdx, b.strand);
+			const vecA = state.getPartialStrandA3(a.partialIdx, a.strand);
+			const vecB = state.getPartialStrandA3(b.partialIdx, b.strand);
 			if (!vecA || !vecB) return false;
 			return vecA.dot(vecB) > 0.707;
 		};
 
-		deadfishyLinks.forEach((linksByPartial, deadNode) => {
+		state.deadfishyLinks.forEach(({ deadNode, linksByPartial }) => {
 			const candidates = Array.from(linksByPartial.values()).sort((a, b) => b.score - a.score);
 			if (!candidates.length) return;
 
-			// Deadfishy belongs to the best-aligned partial by default.
 			const primaryLink = candidates[0];
 			let primaryRoot = findPartial(primaryLink.partialIdx);
 			unite(deadNode, primaryRoot);
 
-			// Bridge to additional partial groups only when the partials also align.
 			for (let i = 1; i < candidates.length; i++) {
 				const candidate = candidates[i];
 				if (!partialsCanBridge(primaryLink, candidate)) continue;
@@ -623,9 +651,7 @@ namespace helix {
 				const currPrimaryRoot = findPartial(primaryRoot);
 				const otherRoot = findPartial(candidate.partialIdx);
 				if (currPrimaryRoot === otherRoot) continue;
-				if (hasDirectConnection(currPrimaryRoot, otherRoot)) {
-					continue; // block deadfishy merge across already-connected helices
-				}
+				if (hasDirectConnection(currPrimaryRoot, otherRoot)) continue;
 
 				unite(deadNode, otherRoot);
 				primaryRoot = mergePartialGroups(currPrimaryRoot, otherRoot);
@@ -644,136 +670,126 @@ namespace helix {
 			const node = partials.length + idx;
 			const root = find(node);
 			if (!groups.has(root)) {
-				lastScraps.push([nt]);
+				initialScraps.push([nt]);
 				return;
 			}
 			const arr = groups.get(root) || [];
 			arr.push(nt);
 			groups.set(root, arr);
 		});
-		console.log('Merged Groups:', groups);
 
-		// if everything goes right, you should NEVER have duplicates, helices or nucleotides. But this is good for safety.
 		groups.forEach(group => {
 			const seen = new Set<number>();
 			const unique: Nucleotide[] = [];
 			group.forEach(nt => {
-				if (seen.has(nt.id)) {
-					console.log('Duplicate nucleotide found in helix grouping:', nt);
-					return;
-				}
+				if (seen.has(nt.id)) return;
 				seen.add(nt.id);
 				unique.push(nt);
 			});
-			if (unique.length) helices.push(unique);
+			if (unique.length) coreHelices.push(unique);
 		});
 
-		// After helices are built, attach ssScaffold segments to the helix they connect to.
-		if (ssScaffold && ssScaffold.length) {
-			const idToHelix = new Map<number, number>();
-			helices.forEach((list, idx) => {
-				list.forEach(nt => idToHelix.set(nt.id, idx));
+		return { coreHelices, initialScraps };
+	}
+
+	export function ssScaffolds(coreHelices: Nucleotide[][], ssScaffold: Nucleotide[][]) {
+		const updatedHelices = coreHelices.map(h => h.slice());
+		const scaffoldScraps: Nucleotide[][] = [];
+
+		if (!ssScaffold || !ssScaffold.length) return { updatedHelices, scaffoldScraps };
+		if (!updatedHelices.length) {
+			ssScaffold.forEach(segment => {
+				if (segment.length) scaffoldScraps.push(segment.slice());
 			});
-
-			const ssScaffoldIds = new Set<number>();
-			ssScaffold.forEach(segment => segment.forEach(nt => ssScaffoldIds.add(nt.id)));
-
-			// fairly obvious. Adds the segment of nucleotides (from ssScaffold) to the target helix index.
-			const addToHelix = (targetIdx: number, segment: Nucleotide[]) => {
-				const helix = helices[targetIdx];
-				const seen = new Set<number>(helix.map(nt => nt.id));
-				segment.forEach(nt => {
-					if (seen.has(nt.id)) return;
-					helix.push(nt);
-					seen.add(nt.id);
-					idToHelix.set(nt.id, targetIdx);
-				});
-			};
-
-			const findSsScaffoldTargets = (segment: Nucleotide[]) => {
-				const segmentIds = new Set<number>(segment.map(nt => nt.id));
-				const helixIndices = new Set<number>();
-
-				segment.forEach(nt => {
-					const n5 = nt.n5 as Nucleotide | null;
-					const n3 = nt.n3 as Nucleotide | null;
-
-					if (n5 && !segmentIds.has(n5.id) && !ssScaffoldIds.has(n5.id)) {
-						const hIdx = idToHelix.get(n5.id);
-						if (hIdx !== undefined) helixIndices.add(hIdx);
-					}
-
-					if (n3 && !segmentIds.has(n3.id) && !ssScaffoldIds.has(n3.id)) {
-						const hIdx = idToHelix.get(n3.id);
-						if (hIdx !== undefined) helixIndices.add(hIdx);
-					}
-				});
-
-				return Array.from(helixIndices.values());
-			};
-
-			let pending = ssScaffold.filter(segment => segment.length > 0);
-			const maxRounds = Math.max(1, pending.length * 2);
-			let round = 0;
-
-			while (pending.length) {
-				round += 1;
-				let attachedThisRound = 0;
-				const nextPending: Nucleotide[][] = [];
-
-				pending.forEach(segment => {
-					const targets = findSsScaffoldTargets(segment);
-					if (!targets.length) {
-						nextPending.push(segment);
-						return;
-					}
-
-					// IN CASE that the ssScaffold segment connects to multiple helices, warn the user.
-					if (targets.length > 1) {
-						console.warn('ssScaffold segment connects to multiple helices; attaching to first.', {
-							helices: targets,
-							segmentLength: segment.length,
-							round
-						});
-					}
-					const primary = targets[0];
-					addToHelix(primary, segment);
-					attachedThisRound += 1;
-				});
-
-				if (!nextPending.length) break;
-
-				if (!attachedThisRound) {
-					console.warn('[ssScaffold] No attach progress in retry round; moving unresolved segments to lastScraps as grouped segments.', {
-						round,
-						unresolvedSegments: nextPending.length
-					});
-					nextPending.forEach(segment => lastScraps.push(segment.slice()));
-					break;
-				}
-
-				if (round >= maxRounds) {
-					console.warn('[ssScaffold] Retry limit reached; moving unresolved segments to lastScraps as grouped segments.', {
-						round,
-						unresolvedSegments: nextPending.length,
-						maxRounds
-					});
-					nextPending.forEach(segment => lastScraps.push(segment.slice()));
-					break;
-				}
-
-				pending = nextPending;
-			}
+			return { updatedHelices, scaffoldScraps };
 		}
 
-		const partialToHelix = new Map<number, number>();
-		helices.forEach((list, hIdx) => {
-			list.forEach(nt => {
-				const pIdx = idToPartial.get(nt.id);
-				if (pIdx !== undefined && !partialToHelix.has(pIdx)) {
-					partialToHelix.set(pIdx, hIdx);
+		const idToHelix = new Map<number, number>();
+		updatedHelices.forEach((list, idx) => {
+			list.forEach(nt => idToHelix.set(nt.id, idx));
+		});
+
+		const ssScaffoldIds = new Set<number>();
+		ssScaffold.forEach(segment => segment.forEach(nt => ssScaffoldIds.add(nt.id)));
+
+		const addToHelix = (targetIdx: number, segment: Nucleotide[]) => {
+			const helix = updatedHelices[targetIdx];
+			if (!helix) return;
+			const seen = new Set<number>(helix.map(nt => nt.id));
+			segment.forEach(nt => {
+				if (seen.has(nt.id)) return;
+				helix.push(nt);
+				seen.add(nt.id);
+				idToHelix.set(nt.id, targetIdx);
+			});
+		};
+
+		const findTargets = (segment: Nucleotide[]) => {
+			const segmentIds = new Set<number>(segment.map(nt => nt.id));
+			const helixIndices = new Set<number>();
+
+			segment.forEach(nt => {
+				const n5 = nt.n5 as Nucleotide | null;
+				const n3 = nt.n3 as Nucleotide | null;
+
+				if (n5 && !segmentIds.has(n5.id) && !ssScaffoldIds.has(n5.id)) {
+					const hIdx = idToHelix.get(n5.id);
+					if (hIdx !== undefined) helixIndices.add(hIdx);
+				}
+
+				if (n3 && !segmentIds.has(n3.id) && !ssScaffoldIds.has(n3.id)) {
+					const hIdx = idToHelix.get(n3.id);
+					if (hIdx !== undefined) helixIndices.add(hIdx);
 				}
 			});
+
+			return Array.from(helixIndices.values());
+		};
+
+		let pending = ssScaffold.filter(segment => segment.length > 0).map(segment => segment.slice());
+		const maxRounds = Math.max(1, pending.length * 2);
+		let round = 0;
+
+		while (pending.length) {
+			round += 1;
+			let attachedThisRound = 0;
+			const nextPending: Nucleotide[][] = [];
+
+			pending.forEach(segment => {
+				const targets = findTargets(segment);
+				if (!targets.length) {
+					nextPending.push(segment);
+					return;
+				}
+
+				const primary = targets[0];
+				addToHelix(primary, segment);
+				attachedThisRound += 1;
+			});
+
+			if (!nextPending.length) break;
+			if (!attachedThisRound || round >= maxRounds) {
+				nextPending.forEach(segment => scaffoldScraps.push(segment.slice()));
+				break;
+			}
+
+			pending = nextPending;
+		}
+
+		return { updatedHelices, scaffoldScraps };
+	}
+
+	export function ssDNA(updatedHelices: Nucleotide[][], ssdna: Nucleotide[][], combinedScraps: Nucleotide[][]) {
+		const helices = updatedHelices.map(h => h.slice());
+		const binders: Nucleotide[][] = [];
+		const binder2: Nucleotide[][] = [];
+		const disconnected: Nucleotide[][] = [];
+		const unhandled: Nucleotide[][] = [];
+		const lastScraps: Nucleotide[][] = [];
+
+		const idToHelix = new Map<number, number>();
+		helices.forEach((list, idx) => {
+			list.forEach(nt => idToHelix.set(nt.id, idx));
 		});
 
 		const addSegmentToHelix = (targetIdx: number, segment: Nucleotide[]) => {
@@ -784,10 +800,9 @@ namespace helix {
 				if (seen.has(nt.id)) return;
 				helix.push(nt);
 				seen.add(nt.id);
+				idToHelix.set(nt.id, targetIdx);
 			});
 		};
-
-		// const oppositeDir = (dir: 'n5' | 'n3') => (dir === 'n5' ? 'n3' : 'n5');
 
 		const findEndOnSide = (segment: Nucleotide[], segmentSet: Set<number>, dir: 'n5' | 'n3') => {
 			for (const nt of segment) {
@@ -797,7 +812,7 @@ namespace helix {
 			return null;
 		};
 
-		const walkForPartial = (
+		const walkForHelix = (
 			start: Nucleotide | null,
 			dir: 'n5' | 'n3',
 			segmentSet: Set<number>
@@ -805,26 +820,26 @@ namespace helix {
 			let curr = start;
 			while (curr) {
 				if (segmentSet.has(curr.id)) return undefined;
-				const pIdx = idToPartial.get(curr.id);
-				if (pIdx !== undefined) return { pIdx, node: curr };
+				const helixId = idToHelix.get(curr.id);
+				if (helixId !== undefined) return { helixId, node: curr };
 				curr = curr[dir] as Nucleotide | null;
 			}
 			return undefined;
 		};
 
-		const stepWithinSamePartial = (
+		const stepWithinSameHelix = (
 			start: Nucleotide,
 			dir: 'n5' | 'n3',
 			steps: number,
-			pIdx: number
+			helixId: number
 		) => {
 			let curr: Nucleotide | null = start;
 			let last: Nucleotide = start;
 			for (let i = 0; i < steps; i++) {
 				curr = curr?.[dir] as Nucleotide | null;
 				if (!curr) return last;
-				const idx = idToPartial.get(curr.id);
-				if (idx !== pIdx) return last;
+				const idx = idToHelix.get(curr.id);
+				if (idx !== helixId) return last;
 				last = curr;
 			}
 			return last;
@@ -842,8 +857,6 @@ namespace helix {
 		type SideResult = {
 			side: 'n5' | 'n3';
 			result: 'binder' | 'overhang';
-			firstPartialId?: number;
-			oppositePartialId?: number;
 			firstHelixId?: number;
 			oppositeHelixId?: number;
 		};
@@ -858,20 +871,16 @@ namespace helix {
 				const anchor = end[dir] as Nucleotide | null;
 				if (!anchor) return { side: dir, result: 'overhang' };
 
-				const first = walkForPartial(anchor, dir, segmentSet);
+				const first = walkForHelix(anchor, dir, segmentSet);
 				if (!first) return { side: dir, result: 'overhang' };
 
-				const firstHelixId = partialToHelix.get(first.pIdx);
-				// note: using more than 1 step might look fine, but it can cause issues in edge cases.
-				// specifically, structure 51 from nanobase (Dumbbell structure) has issues with this.
-				// Sticking to 1 step has NOT shown ANY problems so far.
-				const lastInPartial = stepWithinSamePartial(first.node, dir, 1, first.pIdx);
-				const pair = lastInPartial.pair as Nucleotide | null;
+				const firstHelixId = first.helixId;
+				const lastInHelix = stepWithinSameHelix(first.node, dir, 1, firstHelixId);
+				const pair = lastInHelix.pair as Nucleotide | null;
 				if (!pair) {
 					return {
 						side: dir,
 						result: 'overhang',
-						firstPartialId: first.pIdx,
 						firstHelixId
 					};
 				}
@@ -881,25 +890,16 @@ namespace helix {
 					return {
 						side: dir,
 						result: 'overhang',
-						firstPartialId: first.pIdx,
 						firstHelixId
 					};
 				}
 
-				const oppositePartialId = idToPartial.get(oppositeNode.id);
-				const oppositeHelixId = oppositePartialId !== undefined ? partialToHelix.get(oppositePartialId) : undefined;
-
-				const binder =
-					oppositePartialId !== undefined &&
-					firstHelixId !== undefined &&
-					oppositeHelixId !== undefined &&
-					firstHelixId === oppositeHelixId;
+				const oppositeHelixId = idToHelix.get(oppositeNode.id);
+				const binder = oppositeHelixId !== undefined && firstHelixId === oppositeHelixId;
 
 				return {
 					side: dir,
 					result: binder ? 'binder' : 'overhang',
-					firstPartialId: first.pIdx,
-					oppositePartialId,
 					firstHelixId,
 					oppositeHelixId
 				};
@@ -910,39 +910,31 @@ namespace helix {
 			return { res5, res3 };
 		};
 
-		const binders: Nucleotide[][] = [];
-		const binder2: Nucleotide[][] = [];
-		const disconnected: Nucleotide[][] = [];
-		const unhandled: Nucleotide[][] = [];
-
 		const isBinder = (res: SideResult | undefined) => res?.result === 'binder';
 		const isOverhang = (res: SideResult | undefined) => res?.result === 'overhang';
-		const hasPartial = (res: SideResult | undefined) => res?.firstPartialId !== undefined;
+		const hasHelix = (res: SideResult | undefined) => res?.firstHelixId !== undefined;
 
-		// The lot of if statements are required (unless you can figure out a better way).
-		// You can read through these, but they mostly comprise of cases where the segment is connected to helices on both ends, and has different types of such connections.
-		// example, if overhang on one end and binder on the other, then it will connect to the helix on overhang side.
 		ssdna.forEach(segment => {
 			if (!segment.length) return;
 			const { res5, res3 } = classifySegment(segment);
-			const res5HasPartial = hasPartial(res5);
-			const res3HasPartial = hasPartial(res3);
+			const res5HasHelix = hasHelix(res5);
+			const res3HasHelix = hasHelix(res3);
 
-			if (!res5HasPartial && !res3HasPartial) {
+			if (!res5HasHelix && !res3HasHelix) {
 				disconnected.push(segment);
 				return;
 			}
 
-			if (isOverhang(res5) && hasPartial(res5) && isOverhang(res3) && !hasPartial(res3)) {
+			if (isOverhang(res5) && hasHelix(res5) && isOverhang(res3) && !hasHelix(res3)) {
 				if (res5.firstHelixId !== undefined) addSegmentToHelix(res5.firstHelixId, segment);
 				return;
 			}
-			if (isOverhang(res3) && hasPartial(res3) && isOverhang(res5) && !hasPartial(res5)) {
+			if (isOverhang(res3) && hasHelix(res3) && isOverhang(res5) && !hasHelix(res5)) {
 				if (res3.firstHelixId !== undefined) addSegmentToHelix(res3.firstHelixId, segment);
 				return;
 			}
 
-			if (isOverhang(res5) && res5HasPartial && isOverhang(res3) && res3HasPartial) {
+			if (isOverhang(res5) && res5HasHelix && isOverhang(res3) && res3HasHelix) {
 				if (res5.firstHelixId !== undefined && res3.firstHelixId !== undefined) {
 					const half = Math.floor(segment.length / 2);
 					const left = segment.slice(0, half);
@@ -953,29 +945,29 @@ namespace helix {
 				}
 			}
 
-			if (isOverhang(res5) && hasPartial(res5) && isBinder(res3)) {
+			if (isOverhang(res5) && hasHelix(res5) && isBinder(res3)) {
 				if (res5.firstHelixId !== undefined) addSegmentToHelix(res5.firstHelixId, segment);
 				return;
 			}
-			if (isOverhang(res3) && hasPartial(res3) && isBinder(res5)) {
+			if (isOverhang(res3) && hasHelix(res3) && isBinder(res5)) {
 				if (res3.firstHelixId !== undefined) addSegmentToHelix(res3.firstHelixId, segment);
 				return;
 			}
 
-			if (isBinder(res5) && !res5HasPartial && isOverhang(res3) && res3HasPartial) {
+			if (isBinder(res5) && !res5HasHelix && isOverhang(res3) && res3HasHelix) {
 				if (res3.firstHelixId !== undefined) addSegmentToHelix(res3.firstHelixId, segment);
 				return;
 			}
-			if (isBinder(res3) && !res3HasPartial && isOverhang(res5) && res5HasPartial) {
+			if (isBinder(res3) && !res3HasHelix && isOverhang(res5) && res5HasHelix) {
 				if (res5.firstHelixId !== undefined) addSegmentToHelix(res5.firstHelixId, segment);
 				return;
 			}
 
-			if (isBinder(res5) && isOverhang(res3) && !hasPartial(res3)) {
+			if (isBinder(res5) && isOverhang(res3) && !hasHelix(res3)) {
 				binders.push(segment);
 				return;
 			}
-			if (isBinder(res3) && isOverhang(res5) && !hasPartial(res5)) {
+			if (isBinder(res3) && isOverhang(res5) && !hasHelix(res5)) {
 				binders.push(segment);
 				return;
 			}
@@ -988,8 +980,6 @@ namespace helix {
 			unhandled.push(segment);
 		});
 
-		// For any binder/binder2 segments, group them by which helix they connect to.
-		// If multiple binder segments connect to the same helix, they form a new helix.
 		const resolveBinderHelix = (segment: Nucleotide[]) => {
 			const { res5, res3 } = classifySegment(segment);
 			const helixIds = new Set<number>();
@@ -1033,17 +1023,14 @@ namespace helix {
 					newHelix.push(nt);
 				});
 			});
-			if (newHelix.length) helices.push(newHelix);
+			if (newHelix.length) {
+				const newIdx = helices.length;
+				helices.push(newHelix);
+				newHelix.forEach(nt => idToHelix.set(nt.id, newIdx));
+			}
 		});
 
-		// This is the code to re-attach lastScraps[] segments to the closest helix by partial connection (n5/n3).
-		// For grouped segments (e.g. deferred ssScaffold), we attach the full segment to one chosen helix.
-		if (lastScraps.length && helices.length) {
-			const idToHelix = new Map<number, number>();
-			helices.forEach((list, idx) => {
-				list.forEach(nt => idToHelix.set(nt.id, idx));
-			});
-
+		if (combinedScraps.length && helices.length) {
 			type WalkHit = { helixIdx: number; anchor: Nucleotide };
 
 			const walkToHelix = (start: Nucleotide | null, dir: 'n5' | 'n3', owner: Nucleotide): WalkHit | null => {
@@ -1053,7 +1040,6 @@ namespace helix {
 				}
 				let curr: Nucleotide | null = start;
 				while (curr) {
-					// which helix does this current nt belong to?
 					const hIdx = idToHelix.get(curr.id);
 					if (hIdx !== undefined) return { helixIdx: hIdx, anchor: curr };
 					curr = curr[dir] as Nucleotide | null;
@@ -1062,7 +1048,7 @@ namespace helix {
 				return null;
 			};
 
-			const addMurderedSegmentToHelix = (targetIdx: number, segment: Nucleotide[]) => {
+			const addScrapSegmentToHelix = (targetIdx: number, segment: Nucleotide[]) => {
 				const helix = helices[targetIdx];
 				if (!helix) return false;
 				const seen = new Set<number>(helix.map(nt => nt.id));
@@ -1082,17 +1068,7 @@ namespace helix {
 					const via5 = walkToHelix((nt.n5 ?? null) as Nucleotide | null, 'n5', nt);
 					const via3 = walkToHelix((nt.n3 ?? null) as Nucleotide | null, 'n3', nt);
 
-					if (!via5 && via3) {
-						console.log('[walkToHelix] Nucleotide', nt.id, ': n5 lookup failed; using n3 fallback candidate to helix', via3.helixIdx, 'via anchor', via3.anchor.id);
-					}
-					if (!via3 && via5) {
-						console.log('[walkToHelix] Nucleotide', nt.id, ': n3 lookup failed; using n5 fallback candidate to helix', via5.helixIdx, 'via anchor', via5.anchor.id);
-					}
-
-					if (!via5 && !via3) {
-						console.warn('[walkToHelix] Nucleotide', nt.id, ': both n5 and n3 lookups failed while resolving segment target.');
-						return;
-					}
+					if (!via5 && !via3) return;
 
 					const pos = nt.getPos();
 					const consider = (hit: WalkHit) => {
@@ -1110,32 +1086,47 @@ namespace helix {
 			};
 
 			const remaining: Nucleotide[][] = [];
-			lastScraps.forEach(segment => {
+			combinedScraps.forEach(segment => {
 				if (!segment.length) return;
 				const target = pickSegmentTarget(segment);
 				if (!target) {
-					console.warn('[walkToHelix] Could not resolve target helix for lastScraps segment; keeping grouped segment in lastScraps.', {
-						segmentLength: segment.length,
-						segmentIds: segment.map(nt => nt.id)
-					});
-					remaining.push(segment);
+					remaining.push(segment.slice());
 					return;
 				}
 
-				if (!addMurderedSegmentToHelix(target.helixIdx, segment)) {
-					remaining.push(segment);
+				if (!addScrapSegmentToHelix(target.helixIdx, segment)) {
+					remaining.push(segment.slice());
 					return;
 				}
-				console.log('[walkToHelix] Attached lastScraps segment to helix', target.helixIdx, 'segmentLength', segment.length);
 			});
-			// push the remaining grouped segments back to lastScraps[].
-			lastScraps.length = 0;
 			lastScraps.push(...remaining);
+		} else {
+			combinedScraps.forEach(segment => {
+				if (segment.length) lastScraps.push(segment.slice());
+			});
 		}
 
-		// const finalHelices = helices.filter(h => h.length > 0);
 		return { helices, lastScraps, binders, binder2, disconnected, unhandled };
 	}
+
+	export function generateHelix2(partials: Nucleotide[][], ssdna: Nucleotide[][], ssScaffold: Nucleotide[][], stubs: Nucleotide[]) {
+			// Setup and direct partial unions
+			const state = directConnections(partials, stubs);
+			
+			// Resolve deadfishies and pull out the helix arrays
+			const { coreHelices, initialScraps } = makeHelices(partials, stubs, state);
+			
+			// Attempt to attach scaffold segments to the core helices
+			const { updatedHelices, scaffoldScraps } = ssScaffolds(coreHelices, ssScaffold);
+			
+			// Combine our scraps for the final cleanup phase
+			const combinedScraps = [...initialScraps, ...scaffoldScraps];
+			
+			// Process ssdna, build binder helices, and attach scraps spatially
+			const finalResult = ssDNA(updatedHelices, ssdna, combinedScraps);
+    	return finalResult;
+	}
+
 	// export function generateTotal(inputMap: Map<number, Nucleotide>, tolerance = 2) {
 	// 	let {partials, unpaired} = findHelixPartials(inputMap, tolerance);
 	// 	let {ssdna, stubs, longssScaffold} = ssdnaPartials(unpaired);
@@ -1149,7 +1140,7 @@ namespace helix {
 		let { partials, unpaired } = findHelixPartials2(inputMap, tolerance);
 		let { ssdna, stubs, longssScaffold } = ssdnaPartials(unpaired);
 		let ssScaffold = longssScaffoldfunc(longssScaffold, stubs);
-		let { helices, lastScraps, binders, binder2, disconnected, unhandled } = generateHelix(partials, ssdna, ssScaffold, stubs);
+		let { helices, lastScraps, binders, binder2, disconnected, unhandled } = generateHelix2(partials, ssdna, ssScaffold, stubs);
 		const missing: Nucleotide[] = [];
 		console.log("Helices size:", helices.flat().length);
 		console.log("Total elements:", inputMap.size);
