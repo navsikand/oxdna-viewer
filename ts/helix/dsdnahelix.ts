@@ -372,23 +372,23 @@ namespace helix {
 		return ssScaffold;
 	}
 
-	type DeadfishyLink = {
+	type StubLink = {
 		partialIdx: number;
 		score: number;
 		strand: Strand;
 	};
 
-	type DeadfishyQueueItem = {
+	type StubQueueItem = {
 		deadNode: number;
-		linksByPartial: Map<number, DeadfishyLink>;
+		linksByPartial: Map<number, StubLink>;
 	};
 
 	export type DirectConnectionState = {
 		parent: number[];
 		idToPartial: Map<number, number>;
-		idToDeadfishy: Map<number, number>;
+		idToStub: Map<number, number>;
 		partialAdj: Map<number, Set<number>>;
-		deadfishyLinks: DeadfishyQueueItem[];
+		stubLinks: StubQueueItem[];
 		getPartialStrandA3: (partialIdx: number, strand: Strand) => THREE.Vector3 | null;
 		find: (x: number) => number;
 		unite: (a: number, b: number) => void;
@@ -403,8 +403,8 @@ namespace helix {
 		partials.forEach((list, idx) => {
 			list.forEach(nt => idToPartial.set(nt.id, idx));
 		});
-		const idToDeadfishy = new Map<number, number>();
-		stubs.forEach((nt, idx) => idToDeadfishy.set(nt.id, idx));
+		const idToStub = new Map<number, number>();
+		stubs.forEach((nt, idx) => idToStub.set(nt.id, idx));
 
 		// helper function
 		const averageA3 = (list: Nucleotide[]) => {
@@ -451,12 +451,12 @@ namespace helix {
 		};
 
 		// The A3 for stubs. 
-		const deadfishyA3 = new Map<number, THREE.Vector3>();
-		const getDeadfishyA3 = (idx: number) => {
-			let vec = deadfishyA3.get(idx);
+		const stubA3 = new Map<number, THREE.Vector3>();
+		const getStubA3 = (idx: number) => {
+			let vec = stubA3.get(idx);
 			if (!vec) {
 				vec = stubs[idx].getA3().clone().normalize();
-				deadfishyA3.set(idx, vec);
+				stubA3.set(idx, vec);
 			}
 			return vec;
 		};
@@ -470,12 +470,12 @@ namespace helix {
 			if (pa !== pb) parent[pb] = pa;
 		};
 
-		type NodeRef = { node: number; kind: 'partial' | 'deadfishy'; index: number };
+		type NodeRef = { node: number; kind: 'partial' | 'stub'; index: number };
 		const getNodeRef = (nt: Nucleotide): NodeRef | null => {
 			const partialId = idToPartial.get(nt.id);
 			if (partialId !== undefined) return { node: partialId, kind: 'partial', index: partialId };
-			const deadfishyId = idToDeadfishy.get(nt.id);
-			if (deadfishyId !== undefined) return { node: partials.length + deadfishyId, kind: 'deadfishy', index: deadfishyId };
+			const stubId = idToStub.get(nt.id);
+			if (stubId !== undefined) return { node: partials.length + stubId, kind: 'stub', index: stubId };
 			return null;
 		};
 
@@ -490,14 +490,14 @@ namespace helix {
 			partialAdj.set(b, setB);
 		};
 
-		const deadfishyLinksMap = new Map<number, Map<number, DeadfishyLink>>();
-		const addDeadfishyLink = (deadNode: number, partialIdx: number, score: number, strand: Strand) => {
-			const links = deadfishyLinksMap.get(deadNode) || new Map<number, DeadfishyLink>();
+		const stubLinksMap = new Map<number, Map<number, StubLink>>();
+		const addStubLink = (deadNode: number, partialIdx: number, score: number, strand: Strand) => {
+			const links = stubLinksMap.get(deadNode) || new Map<number, StubLink>();
 			const prev = links.get(partialIdx);
 			if (!prev || score > prev.score) {
 				links.set(partialIdx, { partialIdx, score, strand });
 			}
-			deadfishyLinksMap.set(deadNode, links);
+			stubLinksMap.set(deadNode, links);
 		};
 
 		const attachDot = (a: NodeRef, b: NodeRef, strand: Strand) => {
@@ -505,10 +505,10 @@ namespace helix {
 			let vecB: THREE.Vector3 | null = null;
 
 			if (a.kind === 'partial') vecA = getPartialStrandA3(a.index, strand);
-			else vecA = getDeadfishyA3(a.index);
+			else vecA = getStubA3(a.index);
 
 			if (b.kind === 'partial') vecB = getPartialStrandA3(b.index, strand);
-			else vecB = getDeadfishyA3(b.index);
+			else vecB = getStubA3(b.index);
 
 			if (!vecA || !vecB) return -1;
 			return vecA.dot(vecB);
@@ -532,11 +532,11 @@ namespace helix {
 							if (d > dot) {
 								if (nodeA.kind === 'partial' && nodeB.kind === 'partial') {
 									unite(nodeA.node, nodeB.node);
-								} else if (nodeA.kind === 'deadfishy' || nodeB.kind === 'deadfishy') {
-									const deadNode = nodeA.kind === 'deadfishy' ? nodeA : nodeB;
-									const otherNode = nodeA.kind === 'deadfishy' ? nodeB : nodeA;
+								} else if (nodeA.kind === 'stub' || nodeB.kind === 'stub') {
+									const deadNode = nodeA.kind === 'stub' ? nodeA : nodeB;
+									const otherNode = nodeA.kind === 'stub' ? nodeB : nodeA;
 									if (otherNode.kind === 'partial') {
-										addDeadfishyLink(deadNode.node, otherNode.index, d, strand);
+										addStubLink(deadNode.node, otherNode.index, d, strand);
 									}
 								}
 							}
@@ -547,7 +547,7 @@ namespace helix {
 			});
 		});
 
-		const deadfishyLinks = Array.from(deadfishyLinksMap.entries()).map(([deadNode, linksByPartial]) => ({
+		const stubLinks = Array.from(stubLinksMap.entries()).map(([deadNode, linksByPartial]) => ({
 			deadNode,
 			linksByPartial
 		}));
@@ -555,9 +555,9 @@ namespace helix {
 		return {
 			parent,
 			idToPartial,
-			idToDeadfishy,
+			idToStub,
 			partialAdj,
-			deadfishyLinks,
+			stubLinks,
 			getPartialStrandA3,
 			find,
 			unite
@@ -565,6 +565,7 @@ namespace helix {
 	}
 
 	export function makeHelices(partials: Nucleotide[][], stubs: Nucleotide[], state: DirectConnectionState) {
+		const dot = 0.707;
 		const coreHelices: Nucleotide[][] = [];
 		const initialScraps: Nucleotide[][] = [];
 
@@ -629,14 +630,14 @@ namespace helix {
 			return false;
 		};
 
-		const partialsCanBridge = (a: DeadfishyLink, b: DeadfishyLink) => {
+	const partialsCanBridge = (a: StubLink, b: StubLink) => {
 			const vecA = state.getPartialStrandA3(a.partialIdx, a.strand);
 			const vecB = state.getPartialStrandA3(b.partialIdx, b.strand);
 			if (!vecA || !vecB) return false;
-			return vecA.dot(vecB) > 0.707;
+			return vecA.dot(vecB) > dot;
 		};
 
-		state.deadfishyLinks.forEach(({ deadNode, linksByPartial }) => {
+		state.stubLinks.forEach(({ deadNode, linksByPartial }) => {
 			const candidates = Array.from(linksByPartial.values()).sort((a, b) => b.score - a.score);
 			if (!candidates.length) return;
 
@@ -1113,7 +1114,7 @@ namespace helix {
 			// Setup and direct partial unions
 			const state = directConnections(partials, stubs);
 			
-			// Resolve deadfishies and pull out the helix arrays
+			// Resolve stubs and pull out the helix arrays
 			const { coreHelices, initialScraps } = makeHelices(partials, stubs, state);
 			
 			// Attempt to attach scaffold segments to the core helices

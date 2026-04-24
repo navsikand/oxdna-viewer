@@ -7,9 +7,9 @@
 findBasepairs3(); // use 3 because there are 2 versions of findBasepairs, and 3 is the fastest. Dont ask why i named it that.
 let {partials, fishies} = airport.findHelixPartials(elements, 2);
 
-let {ssdna, deadfishies, longssScaffold} = airport.ssdnaPartials(fishies);
-let ssScaffold = airport.longssScaffoldfunc(longssScaffold, deadfishies);
-let {helices, murdered, binders, binder2, disconnected, unhandled} = airport.generateHelix(partials, ssdna, ssScaffold, deadfishies);
+let {ssdna, stubs, longssScaffold} = airport.ssdnaPartials(fishies);
+let ssScaffold = airport.longssScaffoldfunc(longssScaffold, stubs);
+let {helices, murdered, binders, binder2, disconnected, unhandled} = airport.generateHelix(partials, ssdna, ssScaffold, stubs);
 // and helices are what you want!
 // This code has been completed (polishing required but sure).
 // After running this, check for helix.flat().length == elements.size
@@ -300,9 +300,9 @@ namespace helix {
 
 	export function rnaseparation(fishies: Nucleotide[]) {
 		const not_sodead_fishies: Nucleotide[][] = [];
-		const deadfishies: Nucleotide[] = [];
+		const stubs: Nucleotide[] = [];
 
-		if (!fishies.length) return {not_sodead_fishies, deadfishies};
+		if (!fishies.length) return {not_sodead_fishies, stubs};
 
 		const fishSet = new Set<number>(fishies.map(nt => nt.id));
 		const idToNt = new Map<number, Nucleotide>();
@@ -337,14 +337,14 @@ namespace helix {
 			if (component.length >= 4) {
 				not_sodead_fishies.push(component);
 			} else {
-				component.forEach(nt => deadfishies.push(nt));
+				component.forEach(nt => stubs.push(nt));
 			}
 		}
 
-		return {not_sodead_fishies, deadfishies};
+		return {not_sodead_fishies, stubs};
 	}
 
-	export function rnaGenerateHelix(partials: Nucleotide[][], deadfishies: Nucleotide[] = []) {
+	export function rnaGenerateHelix(partials: Nucleotide[][], stubs: Nucleotide[] = []) {
 		const helices: Nucleotide[][] = [];
 		if (!partials.length) return {helices, eligibleEndpoints: [] as Nucleotide[]};
 
@@ -353,15 +353,15 @@ namespace helix {
 			list.forEach(nt => idToPartial.set(nt.id, idx));
 		});
 
-		const idToDeadfishy = new Map<number, number>();
-		deadfishies.forEach((nt, idx) => idToDeadfishy.set(nt.id, idx));
+		const idToStub = new Map<number, number>();
+		stubs.forEach((nt, idx) => idToStub.set(nt.id, idx));
 
-		type NodeRef = { kind: 'partial' | 'deadfishy'; index: number };
+		type NodeRef = { kind: 'partial' | 'stub'; index: number };
 		const getNodeRef = (nt: Nucleotide): NodeRef | null => {
 			const pIdx = idToPartial.get(nt.id);
 			if (pIdx !== undefined) return {kind: 'partial', index: pIdx};
-			const dIdx = idToDeadfishy.get(nt.id);
-			if (dIdx !== undefined) return {kind: 'deadfishy', index: dIdx};
+			const dIdx = idToStub.get(nt.id);
+			if (dIdx !== undefined) return {kind: 'stub', index: dIdx};
 			return null;
 		};
 
@@ -373,12 +373,12 @@ namespace helix {
 			endpointLinks.set(endpoint.id, set);
 		};
 
-		// deadfishyIdx -> connected partial indices (A1-filtered adjacency only)
-		const deadfishyLinks = new Map<number, Set<number>>();
-		const addDeadfishyLink = (deadfishyIdx: number, partialIdx: number) => {
-			const set = deadfishyLinks.get(deadfishyIdx) || new Set<number>();
+		// stubIdx -> connected partial indices (A1-filtered adjacency only)
+		const stubLinks = new Map<number, Set<number>>();
+		const addStubLink = (stubIdx: number, partialIdx: number) => {
+			const set = stubLinks.get(stubIdx) || new Set<number>();
 			set.add(partialIdx);
-			deadfishyLinks.set(deadfishyIdx, set);
+			stubLinks.set(stubIdx, set);
 		};
 
 		// Endpoint detection method mirrored from dsdnahelix: walk each strand and inspect prev/nt crossings.
@@ -397,10 +397,10 @@ namespace helix {
 								if (nodeA.kind === 'partial' && nodeB.kind === 'partial') {
 									addEndpointLink(prev, nodeB.index);
 									addEndpointLink(nt, nodeA.index);
-								} else if (nodeA.kind === 'partial' && nodeB.kind === 'deadfishy') {
-									addDeadfishyLink(nodeB.index, nodeA.index);
-								} else if (nodeA.kind === 'deadfishy' && nodeB.kind === 'partial') {
-									addDeadfishyLink(nodeA.index, nodeB.index);
+								} else if (nodeA.kind === 'partial' && nodeB.kind === 'stub') {
+									addStubLink(nodeB.index, nodeA.index);
+								} else if (nodeA.kind === 'stub' && nodeB.kind === 'partial') {
+									addStubLink(nodeA.index, nodeB.index);
 								}
 							}
 						}
@@ -460,8 +460,8 @@ namespace helix {
 			}
 		});
 
-		// Optional deadfishy-mediated merges across linked partials (A1-filtered during link collection).
-		deadfishyLinks.forEach(linkedPartials => {
+		// Optional stub-mediated merges across linked partials (A1-filtered during link collection).
+		stubLinks.forEach(linkedPartials => {
 			const indices = Array.from(linkedPartials.values());
 			if (indices.length < 2) return;
 			const first = indices[0];
@@ -479,9 +479,9 @@ namespace helix {
 			groups.set(root, arr);
 		});
 
-		// Attach deadfishies to their linked helix groups (A1-filtered during adjacency collection).
-		deadfishies.forEach((nt, dIdx) => {
-			const linked = deadfishyLinks.get(dIdx);
+		// Attach stubs to their linked helix groups (A1-filtered during adjacency collection).
+		stubs.forEach((nt, dIdx) => {
+			const linked = stubLinks.get(dIdx);
 			if (!linked || !linked.size) return;
 			const firstPartial = Array.from(linked.values())[0];
 			const root = find(firstPartial);

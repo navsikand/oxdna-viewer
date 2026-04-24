@@ -352,8 +352,8 @@ var helix;
         partials.forEach((list, idx) => {
             list.forEach(nt => idToPartial.set(nt.id, idx));
         });
-        const idToDeadfishy = new Map();
-        stubs.forEach((nt, idx) => idToDeadfishy.set(nt.id, idx));
+        const idToStub = new Map();
+        stubs.forEach((nt, idx) => idToStub.set(nt.id, idx));
         // helper function
         const averageA3 = (list) => {
             if (!list.length)
@@ -398,12 +398,12 @@ var helix;
             return vec;
         };
         // The A3 for stubs. 
-        const deadfishyA3 = new Map();
-        const getDeadfishyA3 = (idx) => {
-            let vec = deadfishyA3.get(idx);
+        const stubA3 = new Map();
+        const getStubA3 = (idx) => {
+            let vec = stubA3.get(idx);
             if (!vec) {
                 vec = stubs[idx].getA3().clone().normalize();
-                deadfishyA3.set(idx, vec);
+                stubA3.set(idx, vec);
             }
             return vec;
         };
@@ -420,9 +420,9 @@ var helix;
             const partialId = idToPartial.get(nt.id);
             if (partialId !== undefined)
                 return { node: partialId, kind: 'partial', index: partialId };
-            const deadfishyId = idToDeadfishy.get(nt.id);
-            if (deadfishyId !== undefined)
-                return { node: partials.length + deadfishyId, kind: 'deadfishy', index: deadfishyId };
+            const stubId = idToStub.get(nt.id);
+            if (stubId !== undefined)
+                return { node: partials.length + stubId, kind: 'stub', index: stubId };
             return null;
         };
         const partialAdj = new Map();
@@ -436,14 +436,14 @@ var helix;
             setB.add(a);
             partialAdj.set(b, setB);
         };
-        const deadfishyLinksMap = new Map();
-        const addDeadfishyLink = (deadNode, partialIdx, score, strand) => {
-            const links = deadfishyLinksMap.get(deadNode) || new Map();
+        const stubLinksMap = new Map();
+        const addStubLink = (deadNode, partialIdx, score, strand) => {
+            const links = stubLinksMap.get(deadNode) || new Map();
             const prev = links.get(partialIdx);
             if (!prev || score > prev.score) {
                 links.set(partialIdx, { partialIdx, score, strand });
             }
-            deadfishyLinksMap.set(deadNode, links);
+            stubLinksMap.set(deadNode, links);
         };
         const attachDot = (a, b, strand) => {
             let vecA = null;
@@ -451,11 +451,11 @@ var helix;
             if (a.kind === 'partial')
                 vecA = getPartialStrandA3(a.index, strand);
             else
-                vecA = getDeadfishyA3(a.index);
+                vecA = getStubA3(a.index);
             if (b.kind === 'partial')
                 vecB = getPartialStrandA3(b.index, strand);
             else
-                vecB = getDeadfishyA3(b.index);
+                vecB = getStubA3(b.index);
             if (!vecA || !vecB)
                 return -1;
             return vecA.dot(vecB);
@@ -478,11 +478,11 @@ var helix;
                                 if (nodeA.kind === 'partial' && nodeB.kind === 'partial') {
                                     unite(nodeA.node, nodeB.node);
                                 }
-                                else if (nodeA.kind === 'deadfishy' || nodeB.kind === 'deadfishy') {
-                                    const deadNode = nodeA.kind === 'deadfishy' ? nodeA : nodeB;
-                                    const otherNode = nodeA.kind === 'deadfishy' ? nodeB : nodeA;
+                                else if (nodeA.kind === 'stub' || nodeB.kind === 'stub') {
+                                    const deadNode = nodeA.kind === 'stub' ? nodeA : nodeB;
+                                    const otherNode = nodeA.kind === 'stub' ? nodeB : nodeA;
                                     if (otherNode.kind === 'partial') {
-                                        addDeadfishyLink(deadNode.node, otherNode.index, d, strand);
+                                        addStubLink(deadNode.node, otherNode.index, d, strand);
                                     }
                                 }
                             }
@@ -492,16 +492,16 @@ var helix;
                 });
             });
         });
-        const deadfishyLinks = Array.from(deadfishyLinksMap.entries()).map(([deadNode, linksByPartial]) => ({
+        const stubLinks = Array.from(stubLinksMap.entries()).map(([deadNode, linksByPartial]) => ({
             deadNode,
             linksByPartial
         }));
         return {
             parent,
             idToPartial,
-            idToDeadfishy,
+            idToStub,
             partialAdj,
-            deadfishyLinks,
+            stubLinks,
             getPartialStrandA3,
             find,
             unite
@@ -509,6 +509,7 @@ var helix;
     }
     helix_1.directConnections = directConnections;
     function makeHelices(partials, stubs, state) {
+        const dot = 0.707;
         const coreHelices = [];
         const initialScraps = [];
         if (!partials.length) {
@@ -577,9 +578,9 @@ var helix;
             const vecB = state.getPartialStrandA3(b.partialIdx, b.strand);
             if (!vecA || !vecB)
                 return false;
-            return vecA.dot(vecB) > 0.707;
+            return vecA.dot(vecB) > dot;
         };
-        state.deadfishyLinks.forEach(({ deadNode, linksByPartial }) => {
+        state.stubLinks.forEach(({ deadNode, linksByPartial }) => {
             const candidates = Array.from(linksByPartial.values()).sort((a, b) => b.score - a.score);
             if (!candidates.length)
                 return;
@@ -1023,7 +1024,7 @@ var helix;
     function generateHelix2(partials, ssdna, ssScaffold, stubs) {
         // Setup and direct partial unions
         const state = directConnections(partials, stubs);
-        // Resolve deadfishies and pull out the helix arrays
+        // Resolve stubs and pull out the helix arrays
         const { coreHelices, initialScraps } = makeHelices(partials, stubs, state);
         // Attempt to attach scaffold segments to the core helices
         const { updatedHelices, scaffoldScraps } = ssScaffolds(coreHelices, ssScaffold);
