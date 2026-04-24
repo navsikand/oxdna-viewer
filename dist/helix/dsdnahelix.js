@@ -460,7 +460,6 @@ var helix;
                 return -1;
             return vecA.dot(vecB);
         };
-        // Note that stubs don't connect 2 partials together. If a stub is between 2 partials, the partials must also align.
         globalSystems.forEach((system) => {
             system.strands.forEach((strand) => {
                 let prev = null;
@@ -492,8 +491,8 @@ var helix;
                 });
             });
         });
-        const stubLinks = Array.from(stubLinksMap.entries()).map(([deadNode, linksByPartial]) => ({
-            deadNode,
+        const stubLinks = Array.from(stubLinksMap.entries()).map(([stubNode, linksByPartial]) => ({
+            stubNode,
             linksByPartial
         }));
         return {
@@ -508,6 +507,7 @@ var helix;
         };
     }
     helix_1.directConnections = directConnections;
+    // Note that stubs don't connect 2 partials together. If a stub is between 2 partials, the partials must also align.
     function makeHelices(partials, stubs, state) {
         const dot = 0.707;
         const coreHelices = [];
@@ -580,13 +580,13 @@ var helix;
                 return false;
             return vecA.dot(vecB) > dot;
         };
-        state.stubLinks.forEach(({ deadNode, linksByPartial }) => {
+        state.stubLinks.forEach(({ stubNode, linksByPartial }) => {
             const candidates = Array.from(linksByPartial.values()).sort((a, b) => b.score - a.score);
             if (!candidates.length)
                 return;
             const primaryLink = candidates[0];
             let primaryRoot = findPartial(primaryLink.partialIdx);
-            unite(deadNode, primaryRoot);
+            unite(stubNode, primaryRoot);
             for (let i = 1; i < candidates.length; i++) {
                 const candidate = candidates[i];
                 if (!partialsCanBridge(primaryLink, candidate))
@@ -597,7 +597,7 @@ var helix;
                     continue;
                 if (hasDirectConnection(currPrimaryRoot, otherRoot))
                     continue;
-                unite(deadNode, otherRoot);
+                unite(stubNode, otherRoot);
                 primaryRoot = mergePartialGroups(currPrimaryRoot, otherRoot);
             }
         });
@@ -1040,23 +1040,23 @@ var helix;
     // 	let {ssdna, stubs, longssScaffold} = ssdnaPartials(unpaired);
     // 	let ssScaffold = longssScaffoldfunc(longssScaffold);
     // }
-    function findHelices(inputMap, tolerance = 2) {
+    function findHelices(elements, tolerance = 2) {
         findBasepairsOptim2();
         dropIntraStrandPairs();
         // ok now we can do the rest of the stuff.
-        let { partials, unpaired } = findHelixPartials2(inputMap, tolerance);
+        let { partials, unpaired } = findHelixPartials2(elements, tolerance);
         let { ssdna, stubs, longssScaffold } = ssdnaPartials(unpaired);
         let ssScaffold = longssScaffoldfunc(longssScaffold, stubs);
         let { helices, lastScraps, binders, binder2, disconnected, unhandled } = generateHelix2(partials, ssdna, ssScaffold, stubs);
         const missing = [];
         console.log("Helices size:", helices.flat().length);
-        console.log("Total elements:", inputMap.size);
-        if (helices.flat().length !== inputMap.size) {
+        console.log("Total elements:", elements.size);
+        if (helices.flat().length !== elements.size) {
             console.log("Oops has occurred!");
             const helixIds = new Set();
             helices.forEach(list => list.forEach(nt => helixIds.add(nt.id)));
             const missingIds = [];
-            inputMap.forEach((nt) => {
+            elements.forEach((nt) => {
                 if (!helixIds.has(nt.id)) {
                     missing.push(nt);
                     missingIds.push(nt.id);
