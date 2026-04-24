@@ -6,10 +6,10 @@
 // for ease of use, and to prevent dumb mistakes as I code and test things out, here is exactly the commands to use this in console:
 findBasepairs3(); // use 3 because there are 2 versions of findBasepairs, and 3 is the fastest. Dont ask why i named it that.
 helix.dropIntraStrandPairs();
-let {partials, fishies} = helix.findHelixPartials(elements, 2);
-let {ssdna, deadfishies, longssScaffold} = helix.ssdnaPartials(fishies);
-let ssScaffold = helix.longssScaffoldfunc(longssScaffold, deadfishies);
-let {helices, murdered, binders, binder2, disconnected, unhandled} = helix.generateHelix(partials, ssdna, ssScaffold, deadfishies);
+let {partials, unpaired} = helix.findHelixPartials(elements, 2);
+let {ssdna, stubs, longssScaffold} = helix.ssdnaPartials(unpaired);
+let ssScaffold = helix.longssScaffoldfunc(longssScaffold, stubs);
+let {helices, lastScraps, binders, binder2, disconnected, unhandled} = helix.generateHelix(partials, ssdna, ssScaffold, stubs);
 // and helices are what you want!
 // This code has been completed (polishing required but sure).
 // After running this, check for helix.flat().length == elements.size
@@ -77,9 +77,9 @@ namespace helix {
 	// tolerance 2 is good enough for most cases. Higher tolerances seem to have no negative consequences, however.
 	// go to terminatingConditions for what tolerance is.
 	export function findHelixPartials2(inputMap: Map<number, Nucleotide>, tolerance = 2) {
-		const mermaid = new Map<number, Nucleotide>(inputMap); // copy of the elements map
-		const mermaid2 = new Map<number, Nucleotide>(inputMap); // backup copy for duplication, used later
-		const fishies = new Map<number, Nucleotide>(); // unpaired / skipped nts
+		const elmts = new Map<number, Nucleotide>(inputMap); // copy of the elements map
+		const elmts2 = new Map<number, Nucleotide>(inputMap); // backup copy for duplication, used later
+		const unpaired = new Map<number, Nucleotide>(); // unpaired / skipped nts
 
 		let partials: Nucleotide[][] = [];
 		const record = (list: Nucleotide[], set: Set<number>, nt: Nucleotide | null = null) => {
@@ -89,7 +89,7 @@ namespace helix {
 			}
 		};
 
-		const nextStart = () => mermaid.values().next().value;
+		const nextStart = () => elmts.values().next().value;
 
 		while (true) {
 			const start = nextStart();
@@ -97,42 +97,42 @@ namespace helix {
 
 			// Collect unpaired/binder nts for downstream ssDNA processing instead of discarding silently.
 			// Additionally, only walk if the pair is also present in the current pool (mermaid).
-			const pairInPool = start.pair ? mermaid.get(start.pair.id) as Nucleotide | undefined : undefined;
+			const pairInPool = start.pair ? elmts.get(start.pair.id) as Nucleotide | undefined : undefined;
 			if (!start.pair || !pairInPool) {
-				fishies.set(start.id, start as Nucleotide);
-				mermaid.delete(start.id);
+				unpaired.set(start.id, start as Nucleotide);
+				elmts.delete(start.id);
 				continue;
 			}
 
 			// initialize the walker.
 			let curr: Nucleotide | null = start;
-			let ally: Nucleotide | null = pairInPool;
+			let currPair: Nucleotide | null = pairInPool;
 			const strandA = curr.strand; // required to ensure we don't cross strands. This is how we know partials is actually a partial helix.
-			const strandB = ally.strand;
+			const strandB = currPair.strand;
 
 			// this is the partial being built.
 			const partial: Nucleotide[] = [];
 			const seen = new Set<number>();
 
-			type DirectionStep = { nextCurr: Nucleotide; nextAlly: Nucleotide } | null;
+			type DirectionStep = { nextA: Nucleotide; nextB: Nucleotide } | null;
 
-			const terminatingConditions = (baseCurr: Nucleotide, baseAlly: Nucleotide, dir: 1 | -1): DirectionStep => {
-				const nextCurr = mermaid.get(baseCurr.id + dir) as Nucleotide | undefined;
-				const nextAlly = mermaid.get(baseAlly.id - dir) as Nucleotide | undefined;
-				if (!nextCurr || !nextAlly) return null;
-				if (nextCurr.strand !== strandA || nextAlly.strand !== strandB) return null;
+			const terminatingConditions = (nucA: Nucleotide, nucB: Nucleotide, dir: 1 | -1): DirectionStep => {
+				const nucAc = elmts.get(nucA.id + dir) as Nucleotide | undefined;
+				const nucBc = elmts.get(nucB.id - dir) as Nucleotide | undefined;
+				if (!nucAc || !nucBc) return null;
+				if (nucAc.strand !== strandA || nucBc.strand !== strandB) return null;
 
 				// Tolerance window: OR logic. Continue if ANY offset in [1, tolerance] has forward paired to backward.
 				// (allows rescue by walking farther along topological neighbors on both strands).
-				let forwardCursor: Nucleotide | null = baseCurr;
-				let backwardCursor: Nucleotide | null = baseAlly;
+				let forwardCursor: Nucleotide | null = nucA;
+				let backwardCursor: Nucleotide | null = nucB;
 				for (let offset = 1; offset <= tolerance; offset++) {
-					const forward = mermaid.get(baseCurr.id + dir * offset) as Nucleotide | undefined;
-					const backward = mermaid.get(baseAlly.id - dir * offset) as Nucleotide | undefined;
+					const forward = elmts.get(nucA.id + dir * offset) as Nucleotide | undefined;
+					const backward = elmts.get(nucB.id - dir * offset) as Nucleotide | undefined;
 					if (!forward || !backward) continue; // check if either of them even exist.
 					if (forward.strand !== strandA || backward.strand !== strandB) continue;
 					if (forward.pair === backward) {
-						return { nextCurr, nextAlly };
+						return { nextA: nucAc, nextB: nucBc };
 					}
 				}
 
@@ -140,27 +140,27 @@ namespace helix {
 			};
 
 			// actual traversal loop.
-			while (curr && ally) {
+			while (curr && currPair) {
 				record(partial, seen, curr);
-				record(partial, seen, ally);
+				record(partial, seen, currPair);
 
 				// destructive consumption. This is why we make a copy of elements, and not use the original map directly.
-				mermaid.delete(curr.id);
-				mermaid.delete(ally.id);
+				elmts.delete(curr.id);
+				elmts.delete(currPair.id);
 
-				const step = terminatingConditions(curr, ally, 1) || terminatingConditions(curr, ally, -1);
+				const step = terminatingConditions(curr, currPair, 1) || terminatingConditions(curr, currPair, -1);
 
 				if (!step) break;
 
 				// Always consume the immediate neighbors (curr+1 and a-1) even if mismatched.
-				record(partial, seen, step.nextCurr);
-				record(partial, seen, step.nextAlly);
-				mermaid.delete(step.nextCurr.id);
-				mermaid.delete(step.nextAlly.id);
+				record(partial, seen, step.nextA);
+				record(partial, seen, step.nextB);
+				elmts.delete(step.nextA.id);
+				elmts.delete(step.nextB.id);
 
 				// Advance walker by one along each strand.
-				curr = step.nextCurr;
-				ally = step.nextAlly;
+				curr = step.nextA;
+				currPair = step.nextB;
 			}
 
 			if (partial.length) {
@@ -169,7 +169,7 @@ namespace helix {
 		}
 
 		// Deduplicate across all partials: any nucleotide that appears more than once
-		// is moved to fishies along with its pair and any nucleotide paired to it.
+		// is moved to unpaired along with its pair and any nucleotide paired to it.
 		// they will be handled as either ssDNA or just directly added to helix later.
 		const seenfordups = new Map<number, Nucleotide>();
 		const duplicates = new Set<number>();
@@ -192,12 +192,12 @@ namespace helix {
 			console.log('total duplicates: ', duplicates.size);
 			const pairIds = new Set<number>();
 			duplicates.forEach(id => {
-				const a = mermaid2.get(id) as Nucleotide | undefined;
+				const a = elmts2.get(id) as Nucleotide | undefined;
 				if (a) {
-					fishies.set(a.id, a);
+					unpaired.set(a.id, a);
 					if (a.pair) {
 						pairIds.add(a.pair.id);
-						fishies.set(a.pair.id, a.pair);
+						unpaired.set(a.pair.id, a.pair);
 					}
 				}
 			});
@@ -206,11 +206,11 @@ namespace helix {
 			partials.forEach((helix, i) => {
 				partials[i] = helix.filter(nt => {
 					if (duplicates.has(nt.id) || pairIds.has(nt.id)) {
-						fishies.set(nt.id, nt);
+						unpaired.set(nt.id, nt);
 						return false;
 					}
 					if (nt.pair && duplicates.has(nt.pair.id)) {
-						fishies.set(nt.id, nt);
+						unpaired.set(nt.id, nt);
 						return false;
 					}
 					return true;
@@ -221,26 +221,26 @@ namespace helix {
 			partials = partials.filter(helix => helix.length > 0);
 		}
 
-		return { partials, fishies: Array.from(fishies.values()) };
+		return { partials, unpaired: Array.from(unpaired.values()) };
 	}
 
-	// Groups unpaired/binder nucleotides (fishies) into ssDNA partials by strand.
-	// Only contiguous runs (>2) along a strand are kept; shorter runs go to deadfishies.
-	export function ssdnaPartials(fishies: Nucleotide[]) {
-		const byStrand = new Map<Strand, Nucleotide[]>();
+	// Groups unpaired/binder nucleotides (unpaired) into ssDNA partials by strand.
+	// Only contiguous runs (>2) along a strand are kept; shorter runs go to stubs.
+	export function ssdnaPartials(unpaired: Nucleotide[]) {
+		const unpairStrand = new Map<Strand, Nucleotide[]>();
 		const ssdna: Nucleotide[][] = [];
-		const deadfishies: Nucleotide[] = [];
+		const stubs: Nucleotide[] = [];
 		const longssScaffold: Nucleotide[] = [];
 		const scaffold = getScaffoldStrand();
 
-		fishies.forEach(nt => {
-			const arr = byStrand.get(nt.strand) || [];
+		unpaired.forEach(nt => {
+			const arr = unpairStrand.get(nt.strand) || [];
 			arr.push(nt);
-			byStrand.set(nt.strand, arr);
+			unpairStrand.set(nt.strand, arr);
 		});
 
 		// For each strand, sort it, find it's 5' ends and walk down n3 to build runs.
-		byStrand.forEach((list, strand) => {
+		unpairStrand.forEach((list, strand) => {
 			const inSet = new Set(list.map(n => n.id));
 			const visited = new Set<number>();
 			const isScaffoldStrand = scaffold && strand === scaffold;
@@ -269,10 +269,10 @@ namespace helix {
 							longssScaffold.push(...run);
 						}
 					} else {
-						run.forEach(r => deadfishies.push(r));
+						run.forEach(r => stubs.push(r));
 					}
 				}
-				// // expand run both directions along n5/n3 within fishies set
+				// // expand run both directions along n5/n3 within unpaired set
 				// const run: Nucleotide[] = [];
 				// const pushRun = (node: Nucleotide | null, dir: 'n5' | 'n3') => {
 				// 	let curr = node;
@@ -293,12 +293,12 @@ namespace helix {
 				// if (run.length > 2) {
 				// 	ssdna.push(run);
 				// } else {
-				// 	run.forEach(r => deadfishies.push(r));
+				// 	run.forEach(r => stubs.push(r));
 				// }
 			}
 		});
 
-		return { ssdna, deadfishies, longssScaffold };
+		return { ssdna, stubs, longssScaffold };
 	}
 
 	// helper function for adding the average a3 vector in canvas. Really should not be here.
@@ -325,7 +325,8 @@ namespace helix {
 		return avg;
 	};
 
-	export function longssScaffoldfunc(longssScaffold: Nucleotide[], deadfishies: Nucleotide[] = []) {
+	// helper to consolidate the nucleotides into contiguous segments, and enforce equal halves for scaffold segments.
+	export function longssScaffoldfunc(longssScaffold: Nucleotide[], stubs: Nucleotide[] = []) {
 		const ssScaffold: Nucleotide[][] = [];
 		if (!longssScaffold.length) return ssScaffold;
 
@@ -336,7 +337,7 @@ namespace helix {
 		const flushRun = () => {
 			if (!runAway.length) return;
 			if (runAway.length < 3) {
-				runAway.forEach(nt => deadfishies.push(nt));
+				runAway.forEach(nt => stubs.push(nt));
 				runAway = [];
 				return;
 			}
@@ -344,7 +345,7 @@ namespace helix {
 			const evenLen = runAway.length - (runAway.length % 2);
 			if (evenLen !== runAway.length) {
 				const dropped = runAway[evenLen];
-				if (dropped) deadfishies.push(dropped);
+				if (dropped) stubs.push(dropped);
 			}
 			if (evenLen === 0) {
 				runAway = [];
@@ -375,24 +376,24 @@ namespace helix {
 
 	// Perfected!
 	// this one uses average a3 vectors of CONNECTED strands, as opposed to average a3 vectors of the entire partial (which cancels out, due to topology).
-	export function generateHelix(partials: Nucleotide[][], ssdna: Nucleotide[][], ssScaffold: Nucleotide[][], deadfishies: Nucleotide[]) {
-		// Currently uses partials, ssScaffold and deadfishies to build perfect (almost) helices.
-		// Hence, helices.flat().length and ssdna.flat().length should be the full size of the structure. For any missing piece, check murdered[].
+	export function generateHelix(partials: Nucleotide[][], ssdna: Nucleotide[][], ssScaffold: Nucleotide[][], stubs: Nucleotide[]) {
+		// Currently uses partials, ssScaffold and stubs to build perfect (almost) helices.
+		// Hence, helices.flat().length and ssdna.flat().length should be the full size of the structure. For any missing piece, check lastScraps[].
 		const helices: Nucleotide[][] = [];
-		// guys for context murdered[] basically are the dumb nucleotides that couldnt be placed into helices due to fraying and angle conflicts.
+		// guys for context lastScraps[] basically are the dumb nucleotides that couldnt be placed into helices due to fraying and angle conflicts.
 		// Stored as segments so grouped leftovers (e.g. deferred ssScaffold segments) stay together.
 		// #theyDeserveIt
-		const murdered: Nucleotide[][] = [];
-		if (!partials.length) return { helices, murdered }; // surely no helices if no partials.
+		const lastScraps: Nucleotide[][] = [];
+		if (!partials.length) return { helices, lastScraps }; // surely no helices if no partials.
 		const dot = 0.707;
 
-		// quick lookup for id to partial index and deadfishies index.
+		// quick lookup for id to partial index and stubs index.
 		const idToPartial = new Map<number, number>();
 		partials.forEach((list, idx) => {
 			list.forEach(nt => idToPartial.set(nt.id, idx));
 		});
 		const idToDeadfishy = new Map<number, number>();
-		deadfishies.forEach((nt, idx) => idToDeadfishy.set(nt.id, idx));
+		stubs.forEach((nt, idx) => idToDeadfishy.set(nt.id, idx));
 		console.log('ID to Partial Map:', idToPartial); // lets check out what the map looks like
 		console.log('ID to Deadfishy Map:', idToDeadfishy);
 
@@ -441,18 +442,18 @@ namespace helix {
 			return vec;
 		};
 
-		// deadfishies are just single nts, so caching their a3 vectors is simpler.
+		// stubs are just single nts, so caching their a3 vectors is simpler.
 		const deadfishyA3 = new Map<number, THREE.Vector3>();
 		const getDeadfishyA3 = (idx: number) => {
 			let vec = deadfishyA3.get(idx);
 			if (!vec) {
-				vec = deadfishies[idx].getA3().clone().normalize();
+				vec = stubs[idx].getA3().clone().normalize();
 				deadfishyA3.set(idx, vec);
 			}
 			return vec;
 		};
 
-		const totalNodes = partials.length + deadfishies.length;
+		const totalNodes = partials.length + stubs.length;
 		const parent = Array.from({ length: totalNodes }, (_, i) => i);
 		const find = (x: number): number => (parent[x] === x ? x : parent[x] = find(parent[x]));
 		const unite = (a: number, b: number) => {
@@ -533,11 +534,11 @@ namespace helix {
 									// unionize the partials without question
 									unite(nodeA.node, nodeB.node);
 								} else if (nodeA.kind === 'deadfishy' || nodeB.kind === 'deadfishy') {
-									// if either of the nodes are deadfishies, then checks are necessary.
+									// if either of the nodes are stubs, then checks are necessary.
 									// add this to a "link". They will be processed in the 2nd pass. Slows down but much more accurate.
 									const deadNode = nodeA.kind === 'deadfishy' ? nodeA : nodeB;
 									const otherNode = nodeA.kind === 'deadfishy' ? nodeB : nodeA;
-									// does not do anything if both nodes are deadfishies.
+									// does not do anything if both nodes are stubs.
 									if (otherNode.kind === 'partial') {
 										addDeadfishyLink(deadNode.node, otherNode.index, d, strand);
 									}
@@ -550,7 +551,7 @@ namespace helix {
 			});
 		});
 
-		// Second pass: attach deadfishies after partial unions are finalized.
+		// Second pass: attach stubs after partial unions are finalized.
 		const partialParent = Array.from({ length: partials.length }, (_, i) => find(i));
 		const findPartial = (x: number): number => (partialParent[x] === x ? x : partialParent[x] = findPartial(partialParent[x]));
 		const partialMembers = new Map<number, Set<number>>();
@@ -639,11 +640,11 @@ namespace helix {
 			groups.set(root, arr);
 		});
 
-		deadfishies.forEach((nt, idx) => {
+		stubs.forEach((nt, idx) => {
 			const node = partials.length + idx;
 			const root = find(node);
 			if (!groups.has(root)) {
-				murdered.push([nt]);
+				lastScraps.push([nt]);
 				return;
 			}
 			const arr = groups.get(root) || [];
@@ -743,21 +744,21 @@ namespace helix {
 				if (!nextPending.length) break;
 
 				if (!attachedThisRound) {
-					console.warn('[ssScaffold] No attach progress in retry round; moving unresolved segments to murdered as grouped segments.', {
+					console.warn('[ssScaffold] No attach progress in retry round; moving unresolved segments to lastScraps as grouped segments.', {
 						round,
 						unresolvedSegments: nextPending.length
 					});
-					nextPending.forEach(segment => murdered.push(segment.slice()));
+					nextPending.forEach(segment => lastScraps.push(segment.slice()));
 					break;
 				}
 
 				if (round >= maxRounds) {
-					console.warn('[ssScaffold] Retry limit reached; moving unresolved segments to murdered as grouped segments.', {
+					console.warn('[ssScaffold] Retry limit reached; moving unresolved segments to lastScraps as grouped segments.', {
 						round,
 						unresolvedSegments: nextPending.length,
 						maxRounds
 					});
-					nextPending.forEach(segment => murdered.push(segment.slice()));
+					nextPending.forEach(segment => lastScraps.push(segment.slice()));
 					break;
 				}
 
@@ -1035,9 +1036,9 @@ namespace helix {
 			if (newHelix.length) helices.push(newHelix);
 		});
 
-		// This is the code to re-attach murdered[] segments to the closest helix by partial connection (n5/n3).
+		// This is the code to re-attach lastScraps[] segments to the closest helix by partial connection (n5/n3).
 		// For grouped segments (e.g. deferred ssScaffold), we attach the full segment to one chosen helix.
-		if (murdered.length && helices.length) {
+		if (lastScraps.length && helices.length) {
 			const idToHelix = new Map<number, number>();
 			helices.forEach((list, idx) => {
 				list.forEach(nt => idToHelix.set(nt.id, idx));
@@ -1109,11 +1110,11 @@ namespace helix {
 			};
 
 			const remaining: Nucleotide[][] = [];
-			murdered.forEach(segment => {
+			lastScraps.forEach(segment => {
 				if (!segment.length) return;
 				const target = pickSegmentTarget(segment);
 				if (!target) {
-					console.warn('[walkToHelix] Could not resolve target helix for murdered segment; keeping grouped segment in murdered.', {
+					console.warn('[walkToHelix] Could not resolve target helix for lastScraps segment; keeping grouped segment in lastScraps.', {
 						segmentLength: segment.length,
 						segmentIds: segment.map(nt => nt.id)
 					});
@@ -1125,19 +1126,19 @@ namespace helix {
 					remaining.push(segment);
 					return;
 				}
-				console.log('[walkToHelix] Attached murdered segment to helix', target.helixIdx, 'segmentLength', segment.length);
+				console.log('[walkToHelix] Attached lastScraps segment to helix', target.helixIdx, 'segmentLength', segment.length);
 			});
-			// push the remaining grouped segments back to murdered[].
-			murdered.length = 0;
-			murdered.push(...remaining);
+			// push the remaining grouped segments back to lastScraps[].
+			lastScraps.length = 0;
+			lastScraps.push(...remaining);
 		}
 
 		// const finalHelices = helices.filter(h => h.length > 0);
-		return { helices, murdered, binders, binder2, disconnected, unhandled };
+		return { helices, lastScraps, binders, binder2, disconnected, unhandled };
 	}
 	// export function generateTotal(inputMap: Map<number, Nucleotide>, tolerance = 2) {
-	// 	let {partials, fishies} = findHelixPartials(inputMap, tolerance);
-	// 	let {ssdna, deadfishies, longssScaffold} = ssdnaPartials(fishies);
+	// 	let {partials, unpaired} = findHelixPartials(inputMap, tolerance);
+	// 	let {ssdna, stubs, longssScaffold} = ssdnaPartials(unpaired);
 	// 	let ssScaffold = longssScaffoldfunc(longssScaffold);
 	// }
 
@@ -1145,10 +1146,10 @@ namespace helix {
 		findBasepairsOptim2();
 		dropIntraStrandPairs();
 		// ok now we can do the rest of the stuff.
-		let { partials, fishies } = findHelixPartials2(inputMap, tolerance);
-		let { ssdna, deadfishies, longssScaffold } = ssdnaPartials(fishies);
-		let ssScaffold = longssScaffoldfunc(longssScaffold, deadfishies);
-		let { helices, murdered, binders, binder2, disconnected, unhandled } = generateHelix(partials, ssdna, ssScaffold, deadfishies);
+		let { partials, unpaired } = findHelixPartials2(inputMap, tolerance);
+		let { ssdna, stubs, longssScaffold } = ssdnaPartials(unpaired);
+		let ssScaffold = longssScaffoldfunc(longssScaffold, stubs);
+		let { helices, lastScraps, binders, binder2, disconnected, unhandled } = generateHelix(partials, ssdna, ssScaffold, stubs);
 		const missing: Nucleotide[] = [];
 		console.log("Helices size:", helices.flat().length);
 		console.log("Total elements:", inputMap.size);
@@ -1183,13 +1184,13 @@ namespace helix {
 			const missingSet = new Set<number>(missingIds);
 			addHits('partials', partials);
 			addHits('ssdna', ssdna);
-			addHits('deadfishies', deadfishies);
+			addHits('stubs', stubs);
 			addHits('ssScaffold', ssScaffold);
 			if (binders) addHits('binders', binders);
 			if (binder2) addHits('binder2', binder2);
 			if (disconnected) addHits('disconnected', disconnected);
 			if (unhandled) addHits('unhandled', unhandled);
-			addHits('murdered', murdered);
+			addHits('lastScraps', lastScraps);
 
 			const report = missingIds.map(id => ({
 				id,
