@@ -1,3 +1,4 @@
 [submodule "oxCloudDash"]
 	path = oxCloudDash
-	url = https://github.com/mlsample/oxCloudDash.git
+	url = https://github.com/Subhajit-Roy-Partho/oxCloudDash.git
+	branch = main
