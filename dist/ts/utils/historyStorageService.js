@@ -108,11 +108,11 @@ async function saveStructure() {
             };
             const newStructure = {
                 id: newStructureId,
-                commits: [newCommit],
+                commits: [newCommit], // Renamed from 'structure' to 'commits'
                 date: Date.now(),
                 structureName: structureName,
                 branches: { main: [newCommitId] },
-                isSynced: false,
+                isSynced: false, // NEW: Default to not synced
                 syncedProjectId: null, // NEW: No synced project ID yet
             };
             await window.DexieDB.structureData.put(newStructure);
@@ -227,11 +227,11 @@ async function saveStructure() {
         newBranches = reconstructBranchesFromParents(newStructureArray);
         await window.DexieDB.structureData.put({
             id: structureId,
-            commits: newStructureArray,
-            date: Date.now(),
+            commits: newStructureArray, // Updated to use 'commits'
+            date: Date.now(), // Update date on commit
             structureName: oldStructure.structureName,
             branches: newBranches,
-            isSynced: oldStructure.isSynced || false,
+            isSynced: oldStructure.isSynced || false, // Preserve sync status
             syncedProjectId: oldStructure.syncedProjectId || null, // Preserve synced project ID
         });
         alert("Structure saved successfully!");
@@ -477,98 +477,59 @@ async function loadStructure() {
             if (commitToLoad.isEncrypted && commitToLoad.encryptedData && commitToLoad.iv) {
                 console.log("loadStructure: Commit is encrypted, decrypting on-the-fly...");
                 try {
-                    // Get token for decryption
-                    const token = typeof window !== 'undefined' ? window.localStorage.getItem('token') : null;
-                    if (token) {
-                        // Simple JWT decode function (copied from upload.ts)
-                        function decodeJWT(token) {
-                            try {
-                                const base64Url = token.split('.')[1];
-                                const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-                                const jsonPayload = decodeURIComponent(atob(base64).split('').map(function (c) {
-                                    return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
-                                }).join(''));
-                                return JSON.parse(jsonPayload);
-                            }
-                            catch (e) {
-                                console.error("Failed to decode JWT:", e);
+                    // Get key from localStorage (with expiration check)
+                    const getStoredKey = () => {
+                        try {
+                            const stored = localStorage.getItem('enc_key_data');
+                            if (!stored)
+                                return null;
+                            const data = JSON.parse(stored);
+                            // Check expiration (24 hours)
+                            if (Date.now() >= data.expiresAt) {
+                                console.warn('Encryption key expired');
+                                localStorage.removeItem('enc_key_data');
                                 return null;
                             }
+                            return data.key;
                         }
-                        // Decode token to get payload
-                        const decoded = decodeJWT(token);
-                        if (!decoded || !decoded.exp) {
-                            throw new Error('Invalid token structure');
+                        catch {
+                            return null;
                         }
-                        // Encryption configuration (matching oxCloudDash)
-                        const ENCRYPTION_ALGORITHM = 'AES-GCM';
-                        const KEY_DERIVATION_SALT = 'oxview-encryption-salt-v1';
-                        // Check if crypto.subtle is available
-                        if (!crypto.subtle) {
-                            throw new Error('Web Crypto API is not available. Please use HTTPS or localhost.');
-                        }
-                        // Create a base key material from token + salt + expiration
-                        const keyMaterial = `${token}:${KEY_DERIVATION_SALT}:${decoded.exp}`;
-                        // Convert to ArrayBuffer
-                        const encoder = new TextEncoder();
-                        const keyData = encoder.encode(keyMaterial);
-                        // Import the key material
-                        const baseKey = await crypto.subtle.importKey('raw', keyData, 'PBKDF2', false, ['deriveKey']);
-                        // Derive AES-GCM key
-                        const salt = encoder.encode(KEY_DERIVATION_SALT);
-                        const aesKey = await crypto.subtle.deriveKey({
-                            name: 'PBKDF2',
-                            salt: salt,
-                            iterations: 100000,
-                            hash: 'SHA-256'
-                        }, baseKey, {
-                            name: ENCRYPTION_ALGORITHM,
-                            length: 256
-                        }, false, ['decrypt']);
-                        // Decrypt the data
-                        const decryptedData = await crypto.subtle.decrypt({
-                            name: ENCRYPTION_ALGORITHM,
-                            iv: new Uint8Array(commitToLoad.iv)
-                        }, aesKey, commitToLoad.encryptedData);
-                        // Check if decrypted data is valid
-                        if (!decryptedData || decryptedData.byteLength === 0) {
-                            console.error("loadStructure: Decryption resulted in empty data");
-                            if (typeof window.Metro !== 'undefined') {
-                                window.Metro.notify({
-                                    title: 'Decryption Failed',
-                                    message: 'Failed to decrypt commit data: Decrypted data is empty',
-                                    type: 'alert',
-                                });
-                            }
-                            return;
-                        }
-                        // Use the decrypted data for decompression
-                        dataToDecompress = decryptedData;
-                        console.log("loadStructure: Commit decrypted successfully");
+                    };
+                    const keyBase64 = getStoredKey();
+                    if (!keyBase64) {
+                        console.error("loadStructure: No valid encryption key - redirecting to login");
+                        alert('Your encryption key has expired. Please log in again to access encrypted structures.');
+                        window.location.href = '/login';
+                        return;
                     }
-                    else {
-                        console.error("loadStructure: Cannot decrypt commit - no token available");
-                        // Show error to user
+                    // Convert base64 key to CryptoKey
+                    const keyBuffer = Uint8Array.from(atob(keyBase64), c => c.charCodeAt(0));
+                    const aesKey = await crypto.subtle.importKey('raw', keyBuffer, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+                    // Decrypt the data
+                    const decryptedData = await crypto.subtle.decrypt({
+                        name: 'AES-GCM',
+                        iv: new Uint8Array(commitToLoad.iv)
+                    }, aesKey, commitToLoad.encryptedData);
+                    // Validate decrypted data
+                    if (!decryptedData || decryptedData.byteLength === 0) {
+                        console.error("loadStructure: Decryption resulted in empty data");
                         if (typeof window.Metro !== 'undefined') {
                             window.Metro.notify({
                                 title: 'Decryption Failed',
-                                message: 'Failed to decrypt commit data. Please ensure you are logged in.',
+                                message: 'Failed to decrypt commit data',
                                 type: 'alert',
                             });
                         }
                         return;
                     }
+                    dataToDecompress = decryptedData;
+                    console.log("loadStructure: Commit decrypted successfully");
                 }
                 catch (error) {
                     console.error("loadStructure: Failed to decrypt commit:", error);
-                    // Show error to user
-                    if (typeof window.Metro !== 'undefined') {
-                        window.Metro.notify({
-                            title: 'Decryption Failed',
-                            message: 'Failed to decrypt commit data. Please try again.',
-                            type: 'alert',
-                        });
-                    }
+                    alert('Failed to decrypt structure. Please log in again.');
+                    window.location.href = '/login';
                     return;
                 }
             }
@@ -669,11 +630,11 @@ async function createNewProject() {
                 };
                 const newStructure = {
                     id: newStructureId,
-                    commits: [newCommit],
+                    commits: [newCommit], // Renamed from 'structure' to 'commits'
                     date: Date.now(),
                     structureName: structureName,
                     branches: { main: [newCommitId] },
-                    isSynced: false,
+                    isSynced: false, // NEW: Default to not synced
                     syncedProjectId: null, // NEW: No synced project ID yet
                 };
                 await window.DexieDB.structureData.put(newStructure);
@@ -725,11 +686,11 @@ async function createBlankProject() {
     // Create the new structure object, including the initial commit
     const newStructure = {
         id: newStructureId,
-        commits: [initialCommit],
+        commits: [initialCommit], // Renamed from 'structure' to 'commits'
         date: Date.now(),
         structureName: structureName,
-        branches: { main: [newCommitId] },
-        isSynced: false,
+        branches: { main: [newCommitId] }, // Main branch points to the initial commit
+        isSynced: false, // NEW: Default to not synced
         syncedProjectId: null, // NEW: No synced project ID yet
     };
     await window.DexieDB.structureData.put(newStructure);
@@ -993,7 +954,7 @@ async function cleanupRemoteStructures() {
             const branchesObj = reconstructBranchesFromParents(localCommits);
             // Create new local project using remote project ID as local ID
             const newProject = {
-                id: remoteProject.id,
+                id: remoteProject.id, // Use remote ID as local ID for consistency
                 commits: localCommits,
                 structureName: remoteProject.projectName,
                 date: Date.now(),
