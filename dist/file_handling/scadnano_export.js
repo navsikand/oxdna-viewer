@@ -158,7 +158,6 @@ class ScadnanoExportManager {
         if (dialogEl) {
             dialogEl.classList.remove('open');
             dialogEl.setAttribute('aria-hidden', 'true');
-            dialogEl.style.display = 'none';
         }
     }
     exportToScadnano(name, gridType, helixPos) {
