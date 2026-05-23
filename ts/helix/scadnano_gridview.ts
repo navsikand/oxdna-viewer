@@ -36,6 +36,9 @@ namespace scadnano {
     const HONEYCOMB_PARITY_OFFSET = COL_SPACING / 4;
     const SQUARE_X_SCALE = COL_SPACING;
     const SQUARE_ROW_SPACING = COL_SPACING;
+    const EDGE_PAN_MARGIN_PX = 48;
+    const EDGE_PAN_MAX_SPEED_PX = 12;
+    const GRID_EXPANSION_PAD = 4;
 
     // Node circle radius in Three.js world units
     const NODE_RADIUS  = 0.55;
@@ -189,6 +192,7 @@ namespace scadnano {
         private panLast    = new THREE.Vector2();
         private selectedKey: string | null = null;
         private draggingNodeKey: string | null = null;
+        private draggingPointer: { x: number; y: number } | null = null;
 
         // Grid extent (inclusive)
         private minCol: number;
@@ -459,9 +463,76 @@ namespace scadnano {
         }
 
         private _cellFromMouseEvent(e: MouseEvent): { col: number; row: number } | null {
-            const ndc = this._screenToNDC(e.clientX, e.clientY);
+            return this._cellFromClientPoint(e.clientX, e.clientY);
+        }
+
+        private _cellFromClientPoint(clientX: number, clientY: number): { col: number; row: number } | null {
+            const ndc = this._screenToNDC(clientX, clientY);
             const world = this._ndcToWorld(ndc);
             return worldToNearestCell(world.x, world.y, this.layout);
+        }
+
+        private _expandGridToIncludeCell(col: number, row: number): void {
+            let minCol = this.minCol;
+            let maxCol = this.maxCol;
+            let minRow = this.minRow;
+            let maxRow = this.maxRow;
+
+            if (col <= this.minCol + 1) minCol = Math.min(minCol, col - GRID_EXPANSION_PAD);
+            if (col >= this.maxCol - 1) maxCol = Math.max(maxCol, col + GRID_EXPANSION_PAD);
+            if (row <= this.minRow + 1) minRow = Math.min(minRow, row - GRID_EXPANSION_PAD);
+            if (row >= this.maxRow - 1) maxRow = Math.max(maxRow, row + GRID_EXPANSION_PAD);
+
+            if (minCol !== this.minCol || maxCol !== this.maxCol || minRow !== this.minRow || maxRow !== this.maxRow) {
+                this.expandGrid(minCol, maxCol, minRow, maxRow);
+            }
+        }
+
+        private _edgePanFromPointer(clientX: number, clientY: number): boolean {
+            const rect = this.canvas.getBoundingClientRect();
+            if (rect.width === 0 || rect.height === 0) return false;
+
+            const leftDist = clientX - rect.left;
+            const rightDist = rect.right - clientX;
+            const topDist = clientY - rect.top;
+            const bottomDist = rect.bottom - clientY;
+
+            const panX =
+                leftDist < EDGE_PAN_MARGIN_PX ? -(EDGE_PAN_MARGIN_PX - Math.max(0, leftDist)) / EDGE_PAN_MARGIN_PX
+                : rightDist < EDGE_PAN_MARGIN_PX ? (EDGE_PAN_MARGIN_PX - Math.max(0, rightDist)) / EDGE_PAN_MARGIN_PX
+                : 0;
+            const panY =
+                topDist < EDGE_PAN_MARGIN_PX ? (EDGE_PAN_MARGIN_PX - Math.max(0, topDist)) / EDGE_PAN_MARGIN_PX
+                : bottomDist < EDGE_PAN_MARGIN_PX ? -(EDGE_PAN_MARGIN_PX - Math.max(0, bottomDist)) / EDGE_PAN_MARGIN_PX
+                : 0;
+
+            if (!panX && !panY) return false;
+
+            const cam = this.camera;
+            const scaleX = (cam.right - cam.left) / rect.width;
+            const scaleY = (cam.top - cam.bottom) / rect.height;
+            cam.position.x += panX * EDGE_PAN_MAX_SPEED_PX * scaleX;
+            cam.position.y += panY * EDGE_PAN_MAX_SPEED_PX * scaleY;
+            return true;
+        }
+
+        private _syncDraggingNodeToPointer(clientX: number, clientY: number, allowEdgePan: boolean): void {
+            if (!this.draggingNodeKey) return;
+
+            this.draggingPointer = { x: clientX, y: clientY };
+            if (allowEdgePan) {
+                this._edgePanFromPointer(clientX, clientY);
+            }
+
+            const cell = this._cellFromClientPoint(clientX, clientY);
+            if (!cell) return;
+
+            const nextKey = this._moveNode(this.draggingNodeKey, cell.col, cell.row);
+            if (nextKey !== this.draggingNodeKey) {
+                this.draggingNodeKey = nextKey;
+            }
+
+            this.hasDragged = true;
         }
 
         private _moveNode(fromKey: string, toCol: number, toRow: number): string {
@@ -486,6 +557,8 @@ namespace scadnano {
 
             this.records.delete(fromKey);
             this.records.set(toKey, rec);
+
+            this._expandGridToIncludeCell(toCol, toRow);
 
             if (this.selectedKey === fromKey) this.selectedKey = toKey;
             this._rebuildConnectionLines();
@@ -550,6 +623,16 @@ namespace scadnano {
 
         private _ensureGridCoverage(): void {
             const bounds = estimateVisibleGridBounds(this.camera, this.layout);
+            const minCol = Math.min(this.minCol, bounds.colMin);
+            const maxCol = Math.max(this.maxCol, bounds.colMax);
+            const minRow = Math.min(this.minRow, bounds.rowMin);
+            const maxRow = Math.max(this.maxRow, bounds.rowMax);
+
+            if (minCol !== this.minCol || maxCol !== this.maxCol || minRow !== this.minRow || maxRow !== this.maxRow) {
+                this.expandGrid(minCol, maxCol, minRow, maxRow);
+                return;
+            }
+
             this._buildGrid(bounds.colMin, bounds.colMax, bounds.rowMin, bounds.rowMax);
         }
 
@@ -606,8 +689,8 @@ namespace scadnano {
         private _bindEvents(): void {
             this.canvas.addEventListener('click',       this._onClick.bind(this));
             this.canvas.addEventListener('mousedown',   this._onMouseDown.bind(this));
-            this.canvas.addEventListener('mousemove',   this._onMouseMove.bind(this));
-            this.canvas.addEventListener('mouseup',     this._onMouseUp.bind(this));
+            window.addEventListener('mousemove',        this._onMouseMove.bind(this));
+            window.addEventListener('mouseup',          this._onMouseUp.bind(this));
             this.canvas.addEventListener('wheel',       this._onWheel.bind(this), { passive: false });
             this.canvas.addEventListener('contextmenu', e => e.preventDefault());
             window.addEventListener('resize', this._onResize.bind(this));
@@ -642,6 +725,7 @@ namespace scadnano {
                 const key = this._key(cell.col, cell.row);
                 if (key === this.selectedKey && this.records.has(key)) {
                     this.draggingNodeKey = key;
+                    this.draggingPointer = { x: e.clientX, y: e.clientY };
                     this.hasDragged = false;
                     e.preventDefault();
                 }
@@ -650,13 +734,7 @@ namespace scadnano {
 
         private _onMouseMove(e: MouseEvent): void {
             if (this.draggingNodeKey) {
-                const cell = this._cellFromMouseEvent(e);
-                if (!cell) return;
-                const nextKey = this._moveNode(this.draggingNodeKey, cell.col, cell.row);
-                if (nextKey !== this.draggingNodeKey) {
-                    this.draggingNodeKey = nextKey;
-                    this.hasDragged = true;
-                }
+                this._syncDraggingNodeToPointer(e.clientX, e.clientY, false);
                 return;
             }
 
@@ -677,6 +755,7 @@ namespace scadnano {
         private _onMouseUp(_e: MouseEvent): void {
             const wasDraggingNode = this.draggingNodeKey !== null;
             if (this.draggingNodeKey) this.draggingNodeKey = null;
+            this.draggingPointer = null;
 
             if (this.isPanning) {
                 this.isPanning = false;
@@ -728,6 +807,9 @@ namespace scadnano {
 
         private _animate(): void {
             requestAnimationFrame(this._animate.bind(this));
+            if (this.draggingNodeKey && this.draggingPointer) {
+                this._syncDraggingNodeToPointer(this.draggingPointer.x, this.draggingPointer.y, true);
+            }
             this._ensureGridCoverage();
             this.renderer.render(this.scene, this.camera);
         }

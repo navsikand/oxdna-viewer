@@ -1,3 +1,4 @@
+"use strict";
 var VRButton;
 function select3psWrapper() {
     if (selectedBases.size == 0) {

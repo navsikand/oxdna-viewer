@@ -1,3 +1,4 @@
+"use strict";
 function forcesToString(newElementIDs) {
     return forceHandler.forces.map(f => f.toString(newElementIDs)).join('\n\n');
 }

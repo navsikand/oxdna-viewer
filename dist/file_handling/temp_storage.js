@@ -1,3 +1,4 @@
+"use strict";
 async function generateAndStoreCurrentStructure() {
     try {
         const name = "temp_structure"; // Fixed name for temporary storage

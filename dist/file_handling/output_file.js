@@ -1,3 +1,4 @@
+"use strict";
 function makeOutputFiles() {
     let name = view.getInputValue("outputFilename");
     // Determine which order to write the files in
