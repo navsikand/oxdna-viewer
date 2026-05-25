@@ -5,15 +5,15 @@
 /*
 Here's an easy way to use this code:
 
-    const helices = await helix.findHelices(nucleotideElements, 3);
+    const {helices,missing} = helix.findHelices(elements,3)
+
     const { grid, binderHelices } = toscad.setGrid(helices);
     toscad.directionAlign2(grid);
     toscad.alignGridPrim(grid, binderHelices);
-    toscad.combinedHelices(15, grid, helices, binderHelices); // The 15 is arbitrary, just works well for now.
-    const { crossovers } = toscad.collectCrossovers(grid);
-    let helixPos = toscad.HelixPosByRelativeBfs(grid, helices);
-    let gridType = 'honeycomb'; // or 'square'.
-    const scadnano = toscad.buildScadnano2(grid, helices, gridType, helixPos);
+
+    const angles = toscad.getAngles(grid, helices, 'honeycomb');
+    const corrected = toscad.anglecomb(grid, helices, 'honeycomb', angles);
+    const correct = toscad.anglecorr(grid, helices, 'honeycomb', corrected.networkMap);
 */
 var toscad;
 (function (toscad) {
@@ -836,7 +836,6 @@ var toscad;
      *     - forward = (first 5' offset in run === min offset)
      *  4. Sequence is built in backbone-walk order (guaranteed 5'→3').
      */
-    // TODO: needs more testing.
     function buildScadnano2(grid, helices, gridType, helixPositions) {
         // ── Scaffold detection ──────────────────────────────────────────
         const scaffoldStrand = getScaffoldStrand();

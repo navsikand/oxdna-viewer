@@ -9,12 +9,14 @@ type ScadnanoPreparedLayout = {
     helices: Nucleotide[][];
     grid: any;
     helixPos: HelixPosMap;
+    wireframe: boolean;
 };
 
 type ScadnanoDialogOptions = {
     name: string;
     gridType: ScadnanoGridType;
     includeHelixPos: boolean;
+    wireframe: boolean;
 };
 
 interface Window {
@@ -60,7 +62,7 @@ class ScadnanoExportManager {
     }
 
     public exportFromGridView(helixPosInput?: unknown): void {
-        const { name, gridType } = this.readCurrentExportTarget();
+        const { name, gridType, wireframe } = this.readCurrentExportTarget();
         const map = this.normalizeHelixPosMap(helixPosInput ?? window.currentScadnanoHelixPos);
 
         if (!map || map.size === 0) {
@@ -69,7 +71,7 @@ class ScadnanoExportManager {
         }
 
         try {
-            this.exportToScadnano(name, gridType, map);
+            this.exportToScadnano(name, gridType, map, wireframe);
         } catch (err) {
             notify(`Scadnano export failed: ${err}`, 'alert');
         }
@@ -125,7 +127,7 @@ class ScadnanoExportManager {
         if (!options.includeHelixPos) {
             this.runScadnanoLongCalculation(() => {
                 try {
-                    this.exportToScadnano(options.name, options.gridType);
+                    this.exportToScadnano(options.name, options.gridType, undefined, options.wireframe);
                 } catch (err) {
                     notify(`Scadnano export failed: ${err}`, 'alert');
                 }
@@ -139,7 +141,7 @@ class ScadnanoExportManager {
         this.runScadnanoLongCalculation(
             () => {
                 try {
-                    helixPos = this.calculateScadnanoHelixPos(options.gridType);
+                    helixPos = this.calculateScadnanoHelixPos(options.gridType, options.wireframe);
                     if (helixPos) {
                         window.currentScadnanoHelixPos = this.cloneHelixPosMap(helixPos);
                     }
@@ -159,8 +161,9 @@ class ScadnanoExportManager {
         const nameInput = document.getElementById('scadnanoFilename') as HTMLInputElement | null;
         const helixPosCheckbox = document.getElementById('scadnanoIncludeHPos') as HTMLInputElement | null;
         const scadnanoGrid = document.getElementById('scadnanoGrid') as HTMLInputElement | null;
+        const wireframeCheckbox = document.getElementById('scadnanoWireframe') as HTMLInputElement | null;
 
-        if (!nameInput || !helixPosCheckbox || !scadnanoGrid) {
+        if (!nameInput || !helixPosCheckbox || !scadnanoGrid || !wireframeCheckbox) {
             console.warn('scadnano export dialog missing inputs');
             return null;
         }
@@ -169,16 +172,19 @@ class ScadnanoExportManager {
             name: nameInput.value.trim() || 'output',
             gridType: this.normalizeGridType(scadnanoGrid.value),
             includeHelixPos: helixPosCheckbox.checked,
+            wireframe: wireframeCheckbox.checked,
         };
     }
 
-    private readCurrentExportTarget(): { name: string; gridType: ScadnanoGridType } {
+    private readCurrentExportTarget(): { name: string; gridType: ScadnanoGridType; wireframe: boolean } {
         const nameInput = document.getElementById('scadnanoFilename') as HTMLInputElement | null;
         const scadnanoGrid = document.getElementById('scadnanoGrid') as HTMLInputElement | null;
+        const wireframeCheckbox = document.getElementById('scadnanoWireframe') as HTMLInputElement | null;
 
         return {
             name: nameInput?.value.trim() || 'output',
             gridType: this.normalizeGridType(scadnanoGrid?.value),
+            wireframe: Boolean(wireframeCheckbox?.checked),
         };
     }
 
@@ -222,9 +228,14 @@ class ScadnanoExportManager {
         }
     }
 
-    private exportToScadnano(name: string, gridType: ScadnanoGridType, helixPos?: HelixPosMap): void {
+    private exportToScadnano(
+        name: string,
+        gridType: ScadnanoGridType,
+        helixPos?: HelixPosMap,
+        wireframe = false
+    ): void {
         const latticeType: ScadnanoGridType = this.normalizeGridType(gridType);
-        const { helices, grid } = this.prepareScadnanoLayout(latticeType);
+        const { helices, grid } = this.prepareScadnanoLayout(latticeType, false, wireframe);
 
         const scadnano = helixPos
             ? toscad.buildScadnano2(grid, helices, gridType, helixPos)
@@ -265,13 +276,18 @@ class ScadnanoExportManager {
         return helices;
     }
 
-    private prepareScadnanoLayout(latticeType: ScadnanoGridType, forceRecompute = false): ScadnanoPreparedLayout {
+    private prepareScadnanoLayout(
+        latticeType: ScadnanoGridType,
+        forceRecompute = false,
+        wireframe = false
+    ): ScadnanoPreparedLayout {
         const nucleotideCount = this.getCurrentNucleotideCount();
         if (
             !forceRecompute &&
             this.currentScadnanoLayout &&
             this.currentScadnanoLayout.latticeType === latticeType &&
-            this.currentScadnanoLayout.nucleotideCount === nucleotideCount
+            this.currentScadnanoLayout.nucleotideCount === nucleotideCount &&
+            this.currentScadnanoLayout.wireframe === wireframe
         ) {
             this.currentScadnanoHelices = this.currentScadnanoLayout.helices;
             return this.currentScadnanoLayout;
@@ -285,8 +301,13 @@ class ScadnanoExportManager {
         toscad.alignGridPrim(grid, binderHelices);
 
         const angles = toscad.getAngles(grid, helices, latticeType);
-        const corrected = toscad.anglecomb(grid, helices, latticeType, angles);
-        const correct = toscad.anglecorr(grid, helices, latticeType, corrected.networkMap);
+        let networkMap = angles;
+
+        if (!wireframe) {
+            const corrected = toscad.anglecomb(grid, helices, latticeType, angles);
+            const correct = toscad.anglecorr(grid, helices, latticeType, corrected.networkMap);
+            networkMap = correct.networkMap;
+        }
 
         const { crossovers } = toscad.collectCrossovers(grid);
         this.currentScadnanoConnections = this.buildScadnanoConnections(crossovers);
@@ -296,14 +317,15 @@ class ScadnanoExportManager {
             nucleotideCount,
             helices,
             grid,
-            helixPos: toscad.calculateGlobalPositions(correct.networkMap, undefined, undefined, latticeType)
+            helixPos: toscad.calculateGlobalPositions(networkMap, undefined, undefined, latticeType),
+            wireframe
         };
 
         return this.currentScadnanoLayout;
     }
 
-    private calculateScadnanoHelixPos(latticeType: ScadnanoGridType = 'square'): HelixPosMap {
-        const { helixPos } = this.prepareScadnanoLayout(latticeType);
+    private calculateScadnanoHelixPos(latticeType: ScadnanoGridType = 'square', wireframe = false): HelixPosMap {
+        const { helixPos } = this.prepareScadnanoLayout(latticeType, false, wireframe);
         return this.cloneHelixPosMap(helixPos);
     }
 

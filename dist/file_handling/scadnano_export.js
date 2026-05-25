@@ -22,14 +22,14 @@ class ScadnanoExportManager {
         });
     }
     exportFromGridView(helixPosInput) {
-        const { name, gridType } = this.readCurrentExportTarget();
+        const { name, gridType, wireframe } = this.readCurrentExportTarget();
         const map = this.normalizeHelixPosMap(helixPosInput ?? window.currentScadnanoHelixPos);
         if (!map || map.size === 0) {
             notify('No edited helix positions available to export.', 'warning');
             return;
         }
         try {
-            this.exportToScadnano(name, gridType, map);
+            this.exportToScadnano(name, gridType, map, wireframe);
         }
         catch (err) {
             notify(`Scadnano export failed: ${err}`, 'alert');
@@ -76,7 +76,7 @@ class ScadnanoExportManager {
         if (!options.includeHelixPos) {
             this.runScadnanoLongCalculation(() => {
                 try {
-                    this.exportToScadnano(options.name, options.gridType);
+                    this.exportToScadnano(options.name, options.gridType, undefined, options.wireframe);
                 }
                 catch (err) {
                     notify(`Scadnano export failed: ${err}`, 'alert');
@@ -88,7 +88,7 @@ class ScadnanoExportManager {
         let failed = false;
         this.runScadnanoLongCalculation(() => {
             try {
-                helixPos = this.calculateScadnanoHelixPos(options.gridType);
+                helixPos = this.calculateScadnanoHelixPos(options.gridType, options.wireframe);
                 if (helixPos) {
                     window.currentScadnanoHelixPos = this.cloneHelixPosMap(helixPos);
                 }
@@ -107,7 +107,8 @@ class ScadnanoExportManager {
         const nameInput = document.getElementById('scadnanoFilename');
         const helixPosCheckbox = document.getElementById('scadnanoIncludeHPos');
         const scadnanoGrid = document.getElementById('scadnanoGrid');
-        if (!nameInput || !helixPosCheckbox || !scadnanoGrid) {
+        const wireframeCheckbox = document.getElementById('scadnanoWireframe');
+        if (!nameInput || !helixPosCheckbox || !scadnanoGrid || !wireframeCheckbox) {
             console.warn('scadnano export dialog missing inputs');
             return null;
         }
@@ -115,14 +116,17 @@ class ScadnanoExportManager {
             name: nameInput.value.trim() || 'output',
             gridType: this.normalizeGridType(scadnanoGrid.value),
             includeHelixPos: helixPosCheckbox.checked,
+            wireframe: wireframeCheckbox.checked,
         };
     }
     readCurrentExportTarget() {
         const nameInput = document.getElementById('scadnanoFilename');
         const scadnanoGrid = document.getElementById('scadnanoGrid');
+        const wireframeCheckbox = document.getElementById('scadnanoWireframe');
         return {
             name: nameInput?.value.trim() || 'output',
             gridType: this.normalizeGridType(scadnanoGrid?.value),
+            wireframe: Boolean(wireframeCheckbox?.checked),
         };
     }
     normalizeGridType(value) {
@@ -161,9 +165,9 @@ class ScadnanoExportManager {
             dialogEl.setAttribute('aria-hidden', 'true');
         }
     }
-    exportToScadnano(name, gridType, helixPos) {
+    exportToScadnano(name, gridType, helixPos, wireframe = false) {
         const latticeType = this.normalizeGridType(gridType);
-        const { helices, grid } = this.prepareScadnanoLayout(latticeType);
+        const { helices, grid } = this.prepareScadnanoLayout(latticeType, false, wireframe);
         const scadnano = helixPos
             ? toscad.buildScadnano2(grid, helices, gridType, helixPos)
             : toscad.buildScadnano2(grid, helices, gridType);
@@ -198,12 +202,13 @@ class ScadnanoExportManager {
         this.notifyHelixCoverageMismatch(helices, nucleotideElements, this.currentScadnanoMissing);
         return helices;
     }
-    prepareScadnanoLayout(latticeType, forceRecompute = false) {
+    prepareScadnanoLayout(latticeType, forceRecompute = false, wireframe = false) {
         const nucleotideCount = this.getCurrentNucleotideCount();
         if (!forceRecompute &&
             this.currentScadnanoLayout &&
             this.currentScadnanoLayout.latticeType === latticeType &&
-            this.currentScadnanoLayout.nucleotideCount === nucleotideCount) {
+            this.currentScadnanoLayout.nucleotideCount === nucleotideCount &&
+            this.currentScadnanoLayout.wireframe === wireframe) {
             this.currentScadnanoHelices = this.currentScadnanoLayout.helices;
             return this.currentScadnanoLayout;
         }
@@ -213,8 +218,12 @@ class ScadnanoExportManager {
         toscad.directionAlign2(grid);
         toscad.alignGridPrim(grid, binderHelices);
         const angles = toscad.getAngles(grid, helices, latticeType);
-        const corrected = toscad.anglecomb(grid, helices, latticeType, angles);
-        const correct = toscad.anglecorr(grid, helices, latticeType, corrected.networkMap);
+        let networkMap = angles;
+        if (!wireframe) {
+            const corrected = toscad.anglecomb(grid, helices, latticeType, angles);
+            const correct = toscad.anglecorr(grid, helices, latticeType, corrected.networkMap);
+            networkMap = correct.networkMap;
+        }
         const { crossovers } = toscad.collectCrossovers(grid);
         this.currentScadnanoConnections = this.buildScadnanoConnections(crossovers);
         this.currentScadnanoLayout = {
@@ -222,12 +231,13 @@ class ScadnanoExportManager {
             nucleotideCount,
             helices,
             grid,
-            helixPos: toscad.calculateGlobalPositions(correct.networkMap, undefined, undefined, latticeType)
+            helixPos: toscad.calculateGlobalPositions(networkMap, undefined, undefined, latticeType),
+            wireframe
         };
         return this.currentScadnanoLayout;
     }
-    calculateScadnanoHelixPos(latticeType = 'square') {
-        const { helixPos } = this.prepareScadnanoLayout(latticeType);
+    calculateScadnanoHelixPos(latticeType = 'square', wireframe = false) {
+        const { helixPos } = this.prepareScadnanoLayout(latticeType, false, wireframe);
         return this.cloneHelixPosMap(helixPos);
     }
     notifyHelixCoverageMismatch(helices, inputMap, missing = []) {

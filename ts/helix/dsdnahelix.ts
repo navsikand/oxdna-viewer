@@ -602,7 +602,7 @@ namespace helix {
 			const vecA = getPartialStrandA3(a.partialIdx, a.strand);
 			const vecB = getPartialStrandA3(b.partialIdx, b.strand);
 			if (!vecA || !vecB) return false;
-			return vecA.dot(vecB) > 0.707;
+			return vecA.dot(vecB) > dot;
 		};
 
 		stubsLinks.forEach((linksByPartial, stubNode) => {

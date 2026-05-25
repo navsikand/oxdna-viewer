@@ -572,7 +572,7 @@ var helix;
             const vecB = getPartialStrandA3(b.partialIdx, b.strand);
             if (!vecA || !vecB)
                 return false;
-            return vecA.dot(vecB) > 0.707;
+            return vecA.dot(vecB) > dot;
         };
         stubsLinks.forEach((linksByPartial, stubNode) => {
             const candidates = Array.from(linksByPartial.values()).sort((a, b) => b.score - a.score);
