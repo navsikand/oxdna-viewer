@@ -73,7 +73,7 @@ namespace helix {
 		});
 	}
 
-	// Finds helix parts using destructive consumption of a working copy of elements (called mermaid).
+	// Finds helix parts using destructive consumption of a working copy of elements (called elmts).
 	// tolerance 2 is good enough for most cases. Higher tolerances seem to have no negative consequences, however.
 	// go to terminatingConditions for what tolerance is.
 	export function findHelixPartials2(inputMap: Map<number, Nucleotide>, tolerance = 2) {
@@ -96,7 +96,7 @@ namespace helix {
 			if (!start) break;
 
 			// Collect unpaired/binder nts for downstream ssDNA processing instead of discarding silently.
-			// Additionally, only walk if the pair is also present in the current pool (mermaid).
+			// Additionally, only walk if the pair is also present in the current pool (elmts).
 			const pairInPool = start.pair ? elmts.get(start.pair.id) as Nucleotide | undefined : undefined;
 			if (!start.pair || !pairInPool) {
 				unpaired.set(start.id, start as Nucleotide);
@@ -491,13 +491,13 @@ namespace helix {
 		};
 
 		const stubLinksMap = new Map<number, Map<number, StubLink>>();
-		const addStubLink = (deadNode: number, partialIdx: number, score: number, strand: Strand) => {
-			const links = stubLinksMap.get(deadNode) || new Map<number, StubLink>();
+		const addStubLink = (stubNode: number, partialIdx: number, score: number, strand: Strand) => {
+			const links = stubLinksMap.get(stubNode) || new Map<number, StubLink>();
 			const prev = links.get(partialIdx);
 			if (!prev || score > prev.score) {
 				links.set(partialIdx, { partialIdx, score, strand });
 			}
-			stubLinksMap.set(deadNode, links);
+			stubLinksMap.set(stubNode, links);
 		};
 
 		const attachDot = (a: NodeRef, b: NodeRef, strand: Strand) => {
@@ -532,10 +532,10 @@ namespace helix {
 								if (nodeA.kind === 'partial' && nodeB.kind === 'partial') {
 									unite(nodeA.node, nodeB.node);
 								} else if (nodeA.kind === 'stub' || nodeB.kind === 'stub') {
-									const deadNode = nodeA.kind === 'stub' ? nodeA : nodeB;
+									const stubNode = nodeA.kind === 'stub' ? nodeA : nodeB;
 									const otherNode = nodeA.kind === 'stub' ? nodeB : nodeA;
 									if (otherNode.kind === 'partial') {
-										addStubLink(deadNode.node, otherNode.index, d, strand);
+										addStubLink(stubNode.node, otherNode.index, d, strand);
 									}
 								}
 							}

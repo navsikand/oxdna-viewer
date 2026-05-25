@@ -73,7 +73,7 @@ namespace helix {
 		});
 	}
 
-	// Finds helix parts using destructive consumption of a working copy of elements (called mermaid).
+	// Finds helix parts using destructive consumption of a working copy of elements (called elmts).
 	// tolerance 2 is good enough for most cases. Higher tolerances seem to have no negative consequences, however.
 	// go to terminatingConditions for what tolerance is.
 	export function findHelixPartials2(inputMap: Map<number, Nucleotide>, tolerance = 2) {
@@ -96,7 +96,7 @@ namespace helix {
 			if (!start) break;
 
 			// Collect unpaired/binder nts for downstream ssDNA processing instead of discarding silently.
-			// Additionally, only walk if the pair is also present in the current pool (mermaid).
+			// Additionally, only walk if the pair is also present in the current pool (elmts).
 			const pairInPool = start.pair ? elmts.get(start.pair.id) as Nucleotide | undefined : undefined;
 			if (!start.pair || !pairInPool) {
 				unpaired.set(start.id, start as Nucleotide);
@@ -382,7 +382,6 @@ namespace helix {
 		const helices: Nucleotide[][] = [];
 		// guys for context lastScraps[] basically are the dumb nucleotides that couldnt be placed into helices due to fraying and angle conflicts.
 		// Stored as segments so grouped leftovers (e.g. deferred ssScaffold segments) stay together.
-		// #theyDeserveIt
 		const lastScraps: Nucleotide[][] = [];
 		if (!partials.length) return { helices, lastScraps }; // surely no helices if no partials.
 		const dot = 0.707;
@@ -392,10 +391,10 @@ namespace helix {
 		partials.forEach((list, idx) => {
 			list.forEach(nt => idToPartial.set(nt.id, idx));
 		});
-		const idToDeadfishy = new Map<number, number>();
-		stubs.forEach((nt, idx) => idToDeadfishy.set(nt.id, idx));
+		const idTostubs = new Map<number, number>();
+		stubs.forEach((nt, idx) => idTostubs.set(nt.id, idx));
 		console.log('ID to Partial Map:', idToPartial); // lets check out what the map looks like
-		console.log('ID to Deadfishy Map:', idToDeadfishy);
+		console.log('ID to stubs Map:', idTostubs);
 
 		const averageA3 = (list: Nucleotide[]) => {
 			if (!list.length) return null;
@@ -443,12 +442,12 @@ namespace helix {
 		};
 
 		// stubs are just single nts, so caching their a3 vectors is simpler.
-		const deadfishyA3 = new Map<number, THREE.Vector3>();
-		const getDeadfishyA3 = (idx: number) => {
-			let vec = deadfishyA3.get(idx);
+		const stubsA3 = new Map<number, THREE.Vector3>();
+		const getstubsA3 = (idx: number) => {
+			let vec = stubsA3.get(idx);
 			if (!vec) {
 				vec = stubs[idx].getA3().clone().normalize();
-				deadfishyA3.set(idx, vec);
+				stubsA3.set(idx, vec);
 			}
 			return vec;
 		};
@@ -462,17 +461,17 @@ namespace helix {
 			if (pa !== pb) parent[pb] = pa;
 		};
 
-		type NodeRef = { node: number; kind: 'partial' | 'deadfishy'; index: number };
-		// convert a nucleotide to its corresponding node reference (partial or deadfishy)...
+		type NodeRef = { node: number; kind: 'partial' | 'stubs'; index: number };
+		// convert a nucleotide to its corresponding node reference (partial or stubs)...
 		const getNodeRef = (nt: Nucleotide): NodeRef | null => {
 			const partialId = idToPartial.get(nt.id);
 			if (partialId !== undefined) return { node: partialId, kind: 'partial', index: partialId };
-			const deadfishyId = idToDeadfishy.get(nt.id);
-			if (deadfishyId !== undefined) return { node: partials.length + deadfishyId, kind: 'deadfishy', index: deadfishyId };
+			const stubsId = idTostubs.get(nt.id);
+			if (stubsId !== undefined) return { node: partials.length + stubsId, kind: 'stubs', index: stubsId };
 			return null;
 		};
 
-		// Track direct adjacency between partials and collect deadfishy links for a second pass.
+		// Track direct adjacency between partials and collect stubs links for a second pass.
 		const partialAdj = new Map<number, Set<number>>();
 		const addPartialAdj = (a: number, b: number) => {
 			if (a === b) return;
@@ -483,19 +482,19 @@ namespace helix {
 			setB.add(a);
 			partialAdj.set(b, setB);
 		};
-		type DeadfishyLink = {
+		type stubsLink = {
 			partialIdx: number;
 			score: number;
 			strand: Strand;
 		};
-		const deadfishyLinks = new Map<number, Map<number, DeadfishyLink>>();
-		const addDeadfishyLink = (deadNode: number, partialIdx: number, score: number, strand: Strand) => {
-			const links = deadfishyLinks.get(deadNode) || new Map<number, DeadfishyLink>();
+		const stubsLinks = new Map<number, Map<number, stubsLink>>();
+		const addstubsLink = (stubNode: number, partialIdx: number, score: number, strand: Strand) => {
+			const links = stubsLinks.get(stubNode) || new Map<number, stubsLink>();
 			const prev = links.get(partialIdx);
 			if (!prev || score > prev.score) {
 				links.set(partialIdx, { partialIdx, score, strand });
 			}
-			deadfishyLinks.set(deadNode, links);
+			stubsLinks.set(stubNode, links);
 		};
 
 		const attachDot = (a: NodeRef, b: NodeRef, strand: Strand) => {
@@ -503,10 +502,10 @@ namespace helix {
 			let vecB: THREE.Vector3 | null = null;
 
 			if (a.kind === 'partial') vecA = getPartialStrandA3(a.index, strand);
-			else vecA = getDeadfishyA3(a.index);
+			else vecA = getstubsA3(a.index);
 
 			if (b.kind === 'partial') vecB = getPartialStrandA3(b.index, strand);
-			else vecB = getDeadfishyA3(b.index);
+			else vecB = getstubsA3(b.index);
 
 			if (!vecA || !vecB) return -1;
 			return vecA.dot(vecB);
@@ -522,7 +521,7 @@ namespace helix {
 						const nodeA = getNodeRef(prev);
 						const nodeB = getNodeRef(nt);
 						if (nodeA && nodeB && nodeA.node !== nodeB.node) {
-							// find adjacency between partials. Reason being, this will then be used for deadfishy connection checks later.
+							// find adjacency between partials. Reason being, this will then be used for stubs connection checks later.
 							// without this, funny unintended behavior CAN happen.
 							// Example scenario: comment this part out and try running this code on Dumbbell Structure (nanobase 51). Helix 34/35 will be merged, unfortunately.
 							if (nodeA.kind === 'partial' && nodeB.kind === 'partial') {
@@ -533,14 +532,14 @@ namespace helix {
 								if (nodeA.kind === 'partial' && nodeB.kind === 'partial') {
 									// unionize the partials without question
 									unite(nodeA.node, nodeB.node);
-								} else if (nodeA.kind === 'deadfishy' || nodeB.kind === 'deadfishy') {
+								} else if (nodeA.kind === 'stubs' || nodeB.kind === 'stubs') {
 									// if either of the nodes are stubs, then checks are necessary.
 									// add this to a "link". They will be processed in the 2nd pass. Slows down but much more accurate.
-									const deadNode = nodeA.kind === 'deadfishy' ? nodeA : nodeB;
-									const otherNode = nodeA.kind === 'deadfishy' ? nodeB : nodeA;
+									const stubNode = nodeA.kind === 'stubs' ? nodeA : nodeB;
+									const otherNode = nodeA.kind === 'stubs' ? nodeB : nodeA;
 									// does not do anything if both nodes are stubs.
 									if (otherNode.kind === 'partial') {
-										addDeadfishyLink(deadNode.node, otherNode.index, d, strand);
+										addstubsLink(stubNode.node, otherNode.index, d, strand);
 									}
 								}
 							}
@@ -561,7 +560,7 @@ namespace helix {
 			set.add(i);
 			partialMembers.set(root, set);
 		}
-		// merging partials connected via a deadfishy.
+		// merging partials connected via a stubs.
 		const mergePartialGroups = (a: number, b: number) => {
 			let ra = findPartial(a);
 			let rb = findPartial(b);
@@ -599,21 +598,21 @@ namespace helix {
 			return false;
 		};
 
-		const partialsCanBridge = (a: DeadfishyLink, b: DeadfishyLink) => {
+		const partialsCanBridge = (a: stubsLink, b: stubsLink) => {
 			const vecA = getPartialStrandA3(a.partialIdx, a.strand);
 			const vecB = getPartialStrandA3(b.partialIdx, b.strand);
 			if (!vecA || !vecB) return false;
 			return vecA.dot(vecB) > 0.707;
 		};
 
-		deadfishyLinks.forEach((linksByPartial, deadNode) => {
+		stubsLinks.forEach((linksByPartial, stubNode) => {
 			const candidates = Array.from(linksByPartial.values()).sort((a, b) => b.score - a.score);
 			if (!candidates.length) return;
 
-			// Deadfishy belongs to the best-aligned partial by default.
+			// stubs belongs to the best-aligned partial by default.
 			const primaryLink = candidates[0];
 			let primaryRoot = findPartial(primaryLink.partialIdx);
-			unite(deadNode, primaryRoot);
+			unite(stubNode, primaryRoot);
 
 			// Bridge to additional partial groups only when the partials also align.
 			for (let i = 1; i < candidates.length; i++) {
@@ -624,10 +623,10 @@ namespace helix {
 				const otherRoot = findPartial(candidate.partialIdx);
 				if (currPrimaryRoot === otherRoot) continue;
 				if (hasDirectConnection(currPrimaryRoot, otherRoot)) {
-					continue; // block deadfishy merge across already-connected helices
+					continue; // block stubs merge across already-connected helices
 				}
 
-				unite(deadNode, otherRoot);
+				unite(stubNode, otherRoot);
 				primaryRoot = mergePartialGroups(currPrimaryRoot, otherRoot);
 			}
 		});
@@ -1062,7 +1061,7 @@ namespace helix {
 				return null;
 			};
 
-			const addMurderedSegmentToHelix = (targetIdx: number, segment: Nucleotide[]) => {
+			const addlastScrapsSegmentToHelix = (targetIdx: number, segment: Nucleotide[]) => {
 				const helix = helices[targetIdx];
 				if (!helix) return false;
 				const seen = new Set<number>(helix.map(nt => nt.id));
@@ -1122,7 +1121,7 @@ namespace helix {
 					return;
 				}
 
-				if (!addMurderedSegmentToHelix(target.helixIdx, segment)) {
+				if (!addlastScrapsSegmentToHelix(target.helixIdx, segment)) {
 					remaining.push(segment);
 					return;
 				}

@@ -5,11 +5,11 @@
 /*
 // for ease of use, and to prevent dumb mistakes as I code and test things out, here is exactly the commands to use this in console:
 findBasepairs3(); // use 3 because there are 2 versions of findBasepairs, and 3 is the fastest. Dont ask why i named it that.
-let {partials, fishies} = airport.findHelixPartials(elements, 2);
+let {partials, unpaired} = airport.findHelixPartials(elements, 2);
 
-let {ssdna, stubs, longssScaffold} = airport.ssdnaPartials(fishies);
+let {ssdna, stubs, longssScaffold} = airport.ssdnaPartials(unpaired);
 let ssScaffold = airport.longssScaffoldfunc(longssScaffold, stubs);
-let {helices, murdered, binders, binder2, disconnected, unhandled} = airport.generateHelix(partials, ssdna, ssScaffold, stubs);
+let {helices, lastScraps, binders, binder2, disconnected, unhandled} = airport.generateHelix(partials, ssdna, ssScaffold, stubs);
 // and helices are what you want!
 // This code has been completed (polishing required but sure).
 // After running this, check for helix.flat().length == elements.size
@@ -53,13 +53,13 @@ var helix;
     // 	});
     // 	return scaffold;
     // }
-    // Finds helix parts using destructive consumption of a working copy of elements (called mermaid).
+    // Finds helix parts using destructive consumption of a working copy of elements (called elmts).
     // tolerance 2 is good enough for most cases. Higher tolerances seem to have no negative consequences, however.
     // TODO: Remove the strand parameter, maybe later? Check how this works on multi-strand structures. But this is specifically for RNA, so check strand is not needed.
     function findrnapartials(inputMap, tolerance = 2) {
-        const mermaid = new Map(inputMap);
-        const mermaid2 = new Map(inputMap); // backup copy for duplication, used later
-        const fishies = new Map(); // unpaired / skipped nts
+        const elmts = new Map(inputMap);
+        const elmts2 = new Map(inputMap); // backup copy for duplication, used later
+        const unpaired = new Map(); // unpaired / skipped nts
         let partials = [];
         const record = (list, set, nt = null) => {
             if (nt && !set.has(nt.id)) {
@@ -67,18 +67,18 @@ var helix;
                 list.push(nt);
             }
         };
-        const nextStart = () => mermaid.values().next().value;
+        const nextStart = () => elmts.values().next().value;
         while (true) {
             const start = nextStart();
             // console.log('Starting of partials:', start);
             if (!start)
                 break;
             // Collect unpaired/binder nts for downstream ssDNA processing instead of discarding silently.
-            // Additionally, only walk if the pair is also present in the current pool (mermaid).
-            const pairInPool = start.pair ? mermaid.get(start.pair.id) : undefined;
+            // Additionally, only walk if the pair is also present in the current pool (elmts).
+            const pairInPool = start.pair ? elmts.get(start.pair.id) : undefined;
             if (!start.pair || !pairInPool) {
-                fishies.set(start.id, start);
-                mermaid.delete(start.id);
+                unpaired.set(start.id, start);
+                elmts.delete(start.id);
                 continue;
             }
             // initialize the walker.
@@ -90,8 +90,8 @@ var helix;
             const partial = [];
             const seen = new Set();
             const tryDirection = (dir) => {
-                const nextCurr = mermaid.get(curr.id + dir);
-                const nextAlly = mermaid.get(ally.id - dir);
+                const nextCurr = elmts.get(curr.id + dir);
+                const nextAlly = elmts.get(ally.id - dir);
                 if (!nextCurr || !nextAlly)
                     return null;
                 if (nextCurr.strand !== strandA || nextAlly.strand !== strandB)
@@ -100,8 +100,8 @@ var helix;
                 // has forward paired to backward (allows rescue by curr+2/a-2, curr+3/a-3, etc.).
                 let onwards = false;
                 for (let offset = 1; offset <= tolerance; offset++) {
-                    const forward = mermaid.get(curr.id + dir * offset);
-                    const backward = mermaid.get(ally.id - dir * offset);
+                    const forward = elmts.get(curr.id + dir * offset);
+                    const backward = elmts.get(ally.id - dir * offset);
                     if (!forward || !backward)
                         continue; // check if either of them even exist.
                     if (forward.strand !== strandA || backward.strand !== strandB)
@@ -120,16 +120,16 @@ var helix;
                 record(partial, seen, curr);
                 record(partial, seen, ally);
                 // destructive consumption. This is why we make a copy of elements, and not use the original map directly.
-                mermaid.delete(curr.id);
-                mermaid.delete(ally.id);
+                elmts.delete(curr.id);
+                elmts.delete(ally.id);
                 const step = tryDirection(1) || tryDirection(-1);
                 if (!step)
                     break;
                 // Always consume the immediate neighbors (curr+1 and a-1) even if mismatched.
                 record(partial, seen, step.nextCurr);
                 record(partial, seen, step.nextAlly);
-                mermaid.delete(step.nextCurr.id);
-                mermaid.delete(step.nextAlly.id);
+                elmts.delete(step.nextCurr.id);
+                elmts.delete(step.nextAlly.id);
                 // Advance walker by one along each strand.
                 curr = step.nextCurr;
                 ally = step.nextAlly;
@@ -139,7 +139,7 @@ var helix;
             }
         }
         // Deduplicate across all partials: any nucleotide that appears more than once
-        // is moved to fishies along with its pair and any nucleotide paired to it.
+        // is moved to unpaired along with its pair and any nucleotide paired to it.
         // they will be handled as either ssDNA or just directly added to helix later.
         const seenfordups = new Map();
         const duplicates = new Set();
@@ -160,11 +160,11 @@ var helix;
         // partials.forEach((helix,i) => {
         // 	partials[i] = helix.filter(nt => {
         // 		if (duplicates.has(nt.id) || pairIds.has(nt.id)) {
-        // 			fishies.set(nt.id, nt);
+        // 			unpaired.set(nt.id, nt);
         // 			return false;
         // 		}
         // 		if (nt.pair && duplicates.has(nt.pair.id)) {
-        // 			fishies.set(nt.id, nt);
+        // 			unpaired.set(nt.id, nt);
         // 			return false;
         // 		}
         // 		return true;
@@ -176,12 +176,12 @@ var helix;
             console.log('total duplicates: ', duplicates.size);
             const pairIds = new Set();
             duplicates.forEach(id => {
-                const a = mermaid2.get(id);
+                const a = elmts2.get(id);
                 if (a) {
-                    fishies.set(a.id, a);
+                    unpaired.set(a.id, a);
                     if (a.pair) {
                         pairIds.add(a.pair.id);
-                        fishies.set(a.pair.id, a.pair);
+                        unpaired.set(a.pair.id, a.pair);
                     }
                 }
             });
@@ -189,11 +189,11 @@ var helix;
             partials.forEach((helix, i) => {
                 partials[i] = helix.filter(nt => {
                     if (duplicates.has(nt.id) || pairIds.has(nt.id)) {
-                        fishies.set(nt.id, nt);
+                        unpaired.set(nt.id, nt);
                         return false;
                     }
                     if (nt.pair && duplicates.has(nt.pair.id)) {
-                        fishies.set(nt.id, nt);
+                        unpaired.set(nt.id, nt);
                         return false;
                     }
                     return true;
@@ -205,7 +205,7 @@ var helix;
         // Remove any nucleotide that is part of a multi-pairing (2+ nts paired to the same nt)
         // dang it. This doesnt work either, specificially at the ends of the helices, where the fraying causes multi-pairing.
         // const pairedTo = new Map<number, number[]>();
-        // mermaid2.forEach(nt => {
+        // elmts2.forEach(nt => {
         // 	if (!nt.pair) return;
         // 	const list = pairedTo.get(nt.pair.id) || [];
         // 	list.push(nt.id);
@@ -222,7 +222,7 @@ var helix;
         // 	partials.forEach((helix, i) => {
         // 		partials[i] = helix.filter(nt => {
         // 			if (multiPairIds.has(nt.id)) {
-        // 				fishies.set(nt.id, nt);
+        // 				unpaired.set(nt.id, nt);
         // 				return false;
         // 			}
         // 			return true;
@@ -230,7 +230,7 @@ var helix;
         // 	});
         // 	partials = partials.filter(helix => helix.length > 0);
         // }
-        return { partials, fishies: Array.from(fishies.values()) };
+        return { partials, unpaired: Array.from(unpaired.values()) };
     }
     helix_1.findrnapartials = findrnapartials;
     function averageA3(list) {
@@ -277,16 +277,16 @@ var helix;
     }
     helix_1.averageA1 = averageA1;
     ;
-    function rnaseparation(fishies) {
-        const not_sodead_fishies = [];
+    function rnaseparation(unpaired) {
+        const not_sodead_unpaired = [];
         const stubs = [];
-        if (!fishies.length)
-            return { not_sodead_fishies, stubs };
-        const fishSet = new Set(fishies.map(nt => nt.id));
+        if (!unpaired.length)
+            return { not_sodead_unpaired, stubs };
+        const fishSet = new Set(unpaired.map(nt => nt.id));
         const idToNt = new Map();
-        fishies.forEach(nt => idToNt.set(nt.id, nt));
+        unpaired.forEach(nt => idToNt.set(nt.id, nt));
         const visited = new Set();
-        for (const seed of fishies) {
+        for (const seed of unpaired) {
             if (visited.has(seed.id))
                 continue;
             const component = [];
@@ -309,13 +309,13 @@ var helix;
                 }
             }
             if (component.length >= 4) {
-                not_sodead_fishies.push(component);
+                not_sodead_unpaired.push(component);
             }
             else {
                 component.forEach(nt => stubs.push(nt));
             }
         }
-        return { not_sodead_fishies, stubs };
+        return { not_sodead_unpaired, stubs };
     }
     helix_1.rnaseparation = rnaseparation;
     function rnaGenerateHelix(partials, stubs = []) {
