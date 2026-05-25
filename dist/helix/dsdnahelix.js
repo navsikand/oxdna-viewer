@@ -452,6 +452,22 @@ var helix;
             setB.add(a);
             partialAdj.set(b, setB);
         };
+        // Only attach at max 2. Store all candidates and their dot-scores.
+        const partialLinks = new Map();
+        const addPartialLink = (a, b, score) => {
+            if (a === b)
+                return;
+            const linksA = partialLinks.get(a) || new Map();
+            const prevA = linksA.get(b);
+            if (prevA === undefined || score > prevA)
+                linksA.set(b, score);
+            partialLinks.set(a, linksA);
+            const linksB = partialLinks.get(b) || new Map();
+            const prevB = linksB.get(a);
+            if (prevB === undefined || score > prevB)
+                linksB.set(a, score);
+            partialLinks.set(b, linksB);
+        };
         const stubsLinks = new Map();
         const addstubsLink = (stubNode, partialIdx, score, strand) => {
             const links = stubsLinks.get(stubNode) || new Map();
@@ -495,8 +511,7 @@ var helix;
                             const d = attachDot(nodeA, nodeB, strand);
                             if (d > dot) {
                                 if (nodeA.kind === 'partial' && nodeB.kind === 'partial') {
-                                    // unionize the partials without question
-                                    unite(nodeA.node, nodeB.node);
+                                    addPartialLink(nodeA.index, nodeB.index, d);
                                 }
                                 else if (nodeA.kind === 'stubs' || nodeB.kind === 'stubs') {
                                     // if either of the nodes are stubs, then checks are necessary.
@@ -513,6 +528,37 @@ var helix;
                     }
                     prev = nt;
                 });
+            });
+        });
+        // Attach max 2 partials.
+        const partialAttachCount = new Map();
+        const partialTop2 = new Map();
+        partialLinks.forEach((neighbors, idx) => {
+            const top = Array.from(neighbors.entries())
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 2)
+                .map(([id]) => id);
+            partialTop2.set(idx, new Set(top));
+        });
+        const usedEdges = new Set();
+        partialTop2.forEach((neighbors, a) => {
+            neighbors.forEach(b => {
+                if (a === b)
+                    return;
+                const setB = partialTop2.get(b);
+                if (!setB || !setB.has(a))
+                    return;
+                const key = a < b ? `${a}:${b}` : `${b}:${a}`;
+                if (usedEdges.has(key))
+                    return;
+                const countA = partialAttachCount.get(a) ?? 0;
+                const countB = partialAttachCount.get(b) ?? 0;
+                if (countA >= 2 || countB >= 2)
+                    return;
+                usedEdges.add(key);
+                unite(a, b);
+                partialAttachCount.set(a, countA + 1);
+                partialAttachCount.set(b, countB + 1);
             });
         });
         // Second pass: attach stubs after partial unions are finalized.
@@ -567,12 +613,12 @@ var helix;
             }
             return false;
         };
-        const partialsCanBridge = (a, b) => {
+        const partialsBridgeDot = (a, b) => {
             const vecA = getPartialStrandA3(a.partialIdx, a.strand);
             const vecB = getPartialStrandA3(b.partialIdx, b.strand);
             if (!vecA || !vecB)
-                return false;
-            return vecA.dot(vecB) > dot;
+                return -1;
+            return vecA.dot(vecB);
         };
         stubsLinks.forEach((linksByPartial, stubNode) => {
             const candidates = Array.from(linksByPartial.values()).sort((a, b) => b.score - a.score);
@@ -580,12 +626,24 @@ var helix;
                 return;
             // stubs belongs to the best-aligned partial by default.
             const primaryLink = candidates[0];
+            const primaryIdx = primaryLink.partialIdx;
             let primaryRoot = findPartial(primaryLink.partialIdx);
             unite(stubNode, primaryRoot);
             // Bridge to additional partial groups only when the partials also align.
-            for (let i = 1; i < candidates.length; i++) {
-                const candidate = candidates[i];
-                if (!partialsCanBridge(primaryLink, candidate))
+            const bridgeCandidates = candidates
+                .slice(1)
+                .map(candidate => ({
+                candidate,
+                dot: partialsBridgeDot(primaryLink, candidate)
+            }))
+                .filter(item => item.dot > dot)
+                .sort((a, b) => b.dot - a.dot)
+                .slice(0, 2);
+            for (const item of bridgeCandidates) {
+                const candidate = item.candidate;
+                const countPrimary = partialAttachCount.get(primaryIdx) ?? 0;
+                const countOther = partialAttachCount.get(candidate.partialIdx) ?? 0;
+                if (countPrimary >= 2 || countOther >= 2)
                     continue;
                 const currPrimaryRoot = findPartial(primaryRoot);
                 const otherRoot = findPartial(candidate.partialIdx);
@@ -596,6 +654,8 @@ var helix;
                 }
                 unite(stubNode, otherRoot);
                 primaryRoot = mergePartialGroups(currPrimaryRoot, otherRoot);
+                partialAttachCount.set(primaryIdx, countPrimary + 1);
+                partialAttachCount.set(candidate.partialIdx, countOther + 1);
             }
         });
         const groups = new Map();
