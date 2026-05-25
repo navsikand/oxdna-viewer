@@ -373,6 +373,35 @@ namespace helix {
 	}
 
 	// let partialStrandMap = new Map<number, Map<number, Nucleotide[]>>();
+	export function mapPartialEnds(partials: Nucleotide[][]) {
+		const partialEndsMap = new Map<number, { start1: Nucleotide, end1: Nucleotide, start2: Nucleotide, end2: Nucleotide }>();
+
+		partials.forEach((partial, index) => {
+			const inSet = new Set(partial.map(n => n.id));
+			
+			// Find 3' ends (n3 is missing or outside the partial) and sort them by ID
+			const ends3 = partial
+				.filter(n => !n.n3 || !inSet.has((n.n3 as Nucleotide).id))
+				.sort((a, b) => a.id - b.id);
+				
+			// Find 5' ends (n5 is missing or outside the partial)
+			const ends5 = partial.filter(n => !n.n5 || !inSet.has((n.n5 as Nucleotide).id));
+
+			if (ends3.length >= 2 && ends5.length >= 2) {
+				// strand1 is assigned to the one with the lowest ID at the 3' end (ends3[0])
+				const start1 = ends5.find(n => n.strand === ends3[0].strand)!;
+				const start2 = ends5.find(n => n.strand === ends3[1].strand)!;
+
+				partialEndsMap.set(index, {
+					start1: start1, end1: ends3[0],
+					start2: start2, end2: ends3[1]
+				});
+			}
+		});
+
+		return partialEndsMap;
+	}
+
 
 	// Perfected!
 	// this one uses average a3 vectors of CONNECTED strands, as opposed to average a3 vectors of the entire partial (which cancels out, due to topology).
@@ -1255,4 +1284,5 @@ namespace helix {
 		}
 		return { helices, missing };
 	}
+
 }
