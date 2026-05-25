@@ -44,6 +44,16 @@ namespace toscad {
         }
     };
 
+    export function findHelixID(targetId: number, helices: Nucleotide[][]): number | null {
+        for (let i = 0; i < helices.length; i++) {
+            const helix = helices[i];
+            for (const nt of helix) {
+                if (nt.id === targetId) return i;
+            }
+        }
+        return null;
+    }
+
     // helper function
     // Finds the local angle distribution of a given helix relative to its neighbors.
     // Uses crossover offsets defined by LATTICE_CONFIG to determine ideal angle buckets. 

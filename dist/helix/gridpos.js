@@ -30,6 +30,17 @@ var toscad;
             tieEpsilon: 0.01
         }
     };
+    function findHelixID(targetId, helices) {
+        for (let i = 0; i < helices.length; i++) {
+            const helix = helices[i];
+            for (const nt of helix) {
+                if (nt.id === targetId)
+                    return i;
+            }
+        }
+        return null;
+    }
+    toscad.findHelixID = findHelixID;
     // helper function
     // Finds the local angle distribution of a given helix relative to its neighbors.
     // Uses crossover offsets defined by LATTICE_CONFIG to determine ideal angle buckets. 

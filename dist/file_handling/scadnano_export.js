@@ -72,6 +72,24 @@ class ScadnanoExportManager {
             gridDropdown.disabled = !checkboxElement.checked;
         }
     }
+    selectHelixFromNucleotide(nucleotideInput) {
+        if (!document.body.classList.contains('scadnano-grid-open'))
+            return;
+        if (!this.scadnanoGridEditor || typeof this.scadnanoGridEditor.selectNodeById !== 'function')
+            return;
+        const nucleotide = nucleotideInput instanceof Nucleotide
+            ? nucleotideInput
+            : (typeof nucleotideInput === 'number' ? elements.get(nucleotideInput) : null);
+        if (!nucleotide || !(nucleotide instanceof Nucleotide))
+            return;
+        const helices = this.ensureScadnanoHelicesCache();
+        if (!helices)
+            return;
+        const helixId = toscad.findHelixID(nucleotide.id, helices);
+        if (helixId === null)
+            return;
+        this.scadnanoGridEditor.selectNodeById(helixId);
+    }
     runDialogExport(options) {
         if (!options.includeHelixPos) {
             this.runScadnanoLongCalculation(() => {
@@ -496,6 +514,9 @@ function registerScadnanoWindowApi() {
     };
     window.toggleGridDropdown = (checkboxElement) => {
         scadnanoManager.toggleGridDropdown(checkboxElement);
+    };
+    window.scadnanoSelectHelixFromNucleotide = (nucleotideInput) => {
+        scadnanoManager.selectHelixFromNucleotide(nucleotideInput);
     };
 }
 registerScadnanoWindowApi();

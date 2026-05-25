@@ -47,6 +47,7 @@ canvas.addEventListener('mousedown', event => {
             // but it needs to be defined as a callback since the cluster selection
             // can take a while to finish.
             let nucleotide = elements.get(id);
+            window.scadnanoSelectHelixFromNucleotide?.(nucleotide);
             let sys = nucleotide.getSystem();
             let selecting = selectedBases.has(nucleotide) ? false : true;
             // Select multiple elements my holding down ctrl/command

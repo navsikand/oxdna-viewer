@@ -294,6 +294,15 @@ var scadnano;
             this.connections = normalized;
             this._rebuildConnectionLines();
         }
+        /** Select a node by helix id (no-op if not present). */
+        selectNodeById(helixId) {
+            for (const [key, record] of this.records.entries()) {
+                if (record.node.id === helixId) {
+                    this._setSelectedKey(key);
+                    return;
+                }
+            }
+        }
         /** Expand the pre-rendered ghost extent. */
         expandGrid(minCol, maxCol, minRow, maxRow) {
             this.minCol = minCol;

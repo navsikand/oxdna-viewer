@@ -51,6 +51,7 @@ canvas.addEventListener('mousedown', event => { //if mouse is pressed down
 			// can take a while to finish.
 
 			let nucleotide = elements.get(id);
+			window.scadnanoSelectHelixFromNucleotide?.(nucleotide);
 			let sys = nucleotide.getSystem();
 			let selecting = selectedBases.has(nucleotide) ? false : true;
 

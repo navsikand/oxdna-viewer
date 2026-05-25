@@ -34,6 +34,7 @@ interface Window {
     hideScadnanoGridPane?: () => void;
     scadnanoDialogExport?: () => void;
     toggleGridDropdown?: (checkboxElement: HTMLInputElement) => void;
+    scadnanoSelectHelixFromNucleotide?: (nucleotideInput?: unknown) => void;
 }
 
 class ScadnanoExportManager {
@@ -121,6 +122,25 @@ class ScadnanoExportManager {
         if (gridDropdown) {
             gridDropdown.disabled = !checkboxElement.checked;
         }
+    }
+
+    public selectHelixFromNucleotide(nucleotideInput?: unknown): void {
+        if (!document.body.classList.contains('scadnano-grid-open')) return;
+        if (!this.scadnanoGridEditor || typeof this.scadnanoGridEditor.selectNodeById !== 'function') return;
+
+        const nucleotide = nucleotideInput instanceof Nucleotide
+            ? nucleotideInput
+            : (typeof nucleotideInput === 'number' ? elements.get(nucleotideInput) : null);
+
+        if (!nucleotide || !(nucleotide instanceof Nucleotide)) return;
+
+        const helices = this.ensureScadnanoHelicesCache();
+        if (!helices) return;
+
+        const helixId = toscad.findHelixID(nucleotide.id, helices);
+        if (helixId === null) return;
+
+        this.scadnanoGridEditor.selectNodeById(helixId);
     }
 
     private runDialogExport(options: ScadnanoDialogOptions): void {
@@ -625,6 +645,10 @@ function registerScadnanoWindowApi(): void {
 
     window.toggleGridDropdown = (checkboxElement: HTMLInputElement) => {
         scadnanoManager.toggleGridDropdown(checkboxElement);
+    };
+
+    window.scadnanoSelectHelixFromNucleotide = (nucleotideInput?: unknown) => {
+        scadnanoManager.selectHelixFromNucleotide(nucleotideInput);
     };
 }
 

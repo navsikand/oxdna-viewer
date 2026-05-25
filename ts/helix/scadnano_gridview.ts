@@ -360,6 +360,16 @@ namespace scadnano {
             this._rebuildConnectionLines();
         }
 
+        /** Select a node by helix id (no-op if not present). */
+        selectNodeById(helixId: number): void {
+            for (const [key, record] of this.records.entries()) {
+                if (record.node.id === helixId) {
+                    this._setSelectedKey(key);
+                    return;
+                }
+            }
+        }
+
         /** Expand the pre-rendered ghost extent. */
         expandGrid(minCol: number, maxCol: number, minRow: number, maxRow: number): void {
             this.minCol = minCol; this.maxCol = maxCol;
