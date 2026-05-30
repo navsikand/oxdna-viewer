@@ -1021,6 +1021,34 @@ var helix;
             list.push(segment);
             binderGroups.set(helixId, list);
         };
+        // For binder2 segments that span two distinct helices, group by the unordered helix pair.
+        // All binder2 segments connecting the SAME two helices get merged into a single new helix.
+        // Binder2 segments connecting a DIFFERENT pair get their own new helix.
+        const pairKey = (a, b) => (a < b ? `${a}:${b}` : `${b}:${a}`);
+        const binderPairGroups = new Map();
+        const addBinderToPairGroup = (a, b, segment) => {
+            const key = pairKey(a, b);
+            const list = binderPairGroups.get(key) || [];
+            list.push(segment);
+            binderPairGroups.set(key, list);
+        };
+        // Collect helix ids touched by binder-classified sides of a segment.
+        // For binder2 the result has size 1 (both sides agree) or 2 (sides resolve to different helices).
+        const getBinderHelixIds = (segment) => {
+            const { res5, res3 } = classifySegment(segment);
+            const ids = new Set();
+            const collect = (res) => {
+                if (!res || !isBinder(res))
+                    return;
+                if (res.firstHelixId !== undefined)
+                    ids.add(res.firstHelixId);
+                if (res.oppositeHelixId !== undefined)
+                    ids.add(res.oppositeHelixId);
+            };
+            collect(res5);
+            collect(res3);
+            return Array.from(ids.values());
+        };
         binders.forEach(segment => {
             const helixId = resolveBinderHelix(segment);
             if (helixId === undefined)
@@ -1028,12 +1056,19 @@ var helix;
             addBinderToGroup(helixId, segment);
         });
         binder2.forEach(segment => {
-            const helixId = resolveBinderHelix(segment);
-            if (helixId === undefined)
-                return;
-            addBinderToGroup(helixId, segment);
+            const ids = getBinderHelixIds(segment);
+            if (ids.length === 1) {
+                // Single host helix: same path as a normal binder.
+                addBinderToGroup(ids[0], segment);
+            }
+            else if (ids.length === 2) {
+                // Two host helices: group by the unordered pair so all binder2 segments
+                // spanning the same {A, B} pair fuse into one new helix together.
+                addBinderToPairGroup(ids[0], ids[1], segment);
+            }
+            // ids.length === 0 or > 2: should be unreachable for binder2; silently dropped.
         });
-        binderGroups.forEach(segments => {
+        const materializeBinderHelix = (segments) => {
             if (!segments.length)
                 return;
             const seen = new Set();
@@ -1048,7 +1083,9 @@ var helix;
             });
             if (newHelix.length)
                 helices.push(newHelix);
-        });
+        };
+        binderGroups.forEach(segments => materializeBinderHelix(segments));
+        binderPairGroups.forEach(segments => materializeBinderHelix(segments));
         // This is the code to re-attach lastScraps[] segments to the closest helix by partial connection (n5/n3).
         // For grouped segments (e.g. deferred ssScaffold), we attach the full segment to one chosen helix.
         if (lastScraps.length && helices.length) {
@@ -1155,58 +1192,9 @@ var helix;
         let { ssdna, stubs, longssScaffold } = ssdnaPartials(unpaired);
         let ssScaffold = longssScaffoldfunc(longssScaffold, stubs);
         let { helices, lastScraps, binders, binder2, disconnected, unhandled } = generateHelix(partials, ssdna, ssScaffold, stubs);
-        const missing = [];
         console.log("Helices size:", helices.flat().length);
         console.log("Total elements:", inputMap.size);
-        if (helices.flat().length !== inputMap.size) {
-            console.log("Oops has occurred!");
-            const helixIds = new Set();
-            helices.forEach(list => list.forEach(nt => helixIds.add(nt.id)));
-            const missingIds = [];
-            inputMap.forEach((nt) => {
-                if (!helixIds.has(nt.id)) {
-                    missing.push(nt);
-                    missingIds.push(nt.id);
-                }
-            });
-            const listHits = new Map();
-            const addHits = (label, list) => {
-                const add = (nt) => {
-                    if (!missingSet.has(nt.id))
-                        return;
-                    const set = listHits.get(nt.id) || new Set();
-                    set.add(label);
-                    listHits.set(nt.id, set);
-                };
-                if (Array.isArray(list[0])) {
-                    list.forEach(segment => segment.forEach(add));
-                }
-                else {
-                    list.forEach(add);
-                }
-            };
-            const missingSet = new Set(missingIds);
-            addHits('partials', partials);
-            addHits('ssdna', ssdna);
-            addHits('stubs', stubs);
-            addHits('ssScaffold', ssScaffold);
-            if (binders)
-                addHits('binders', binders);
-            if (binder2)
-                addHits('binder2', binder2);
-            if (disconnected)
-                addHits('disconnected', disconnected);
-            if (unhandled)
-                addHits('unhandled', unhandled);
-            addHits('lastScraps', lastScraps);
-            const report = missingIds.map(id => ({
-                id,
-                lists: Array.from(listHits.get(id) || [])
-            }));
-            console.log('Missing nucleotide IDs:', missingIds);
-            console.log('Missing membership report:', report);
-        }
-        return { helices, missing };
+        return { helices };
     }
     helix_1.findHelices = findHelices;
 })(helix || (helix = {}));

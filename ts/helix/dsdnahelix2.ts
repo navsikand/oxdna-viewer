@@ -1142,55 +1142,8 @@ namespace helix {
 		let { ssdna, stubs, longssScaffold } = ssdnaPartials(unpaired);
 		let ssScaffold = longssScaffoldfunc(longssScaffold, stubs);
 		let { helices, lastScraps, binders, binder2, disconnected, unhandled } = generateHelix2(partials, ssdna, ssScaffold, stubs);
-		const missing: Nucleotide[] = [];
 		console.log("Helices size:", helices.flat().length);
 		console.log("Total elements:", elements.size);
-		if (helices.flat().length !== elements.size) {
-			console.log("Oops has occurred!");
-			const helixIds = new Set<number>();
-			helices.forEach(list => list.forEach(nt => helixIds.add(nt.id)));
-
-			const missingIds: number[] = [];
-			elements.forEach((nt) => {
-				if (!helixIds.has(nt.id)) {
-					missing.push(nt);
-					missingIds.push(nt.id);
-				}
-			});
-
-			const listHits = new Map<number, Set<string>>();
-			const addHits = (label: string, list: Nucleotide[] | Nucleotide[][]) => {
-				const add = (nt: Nucleotide) => {
-					if (!missingSet.has(nt.id)) return;
-					const set = listHits.get(nt.id) || new Set<string>();
-					set.add(label);
-					listHits.set(nt.id, set);
-				};
-				if (Array.isArray(list[0])) {
-					(list as Nucleotide[][]).forEach(segment => segment.forEach(add));
-				} else {
-					(list as Nucleotide[]).forEach(add);
-				}
-			};
-
-			const missingSet = new Set<number>(missingIds);
-			addHits('partials', partials);
-			addHits('ssdna', ssdna);
-			addHits('stubs', stubs);
-			addHits('ssScaffold', ssScaffold);
-			if (binders) addHits('binders', binders);
-			if (binder2) addHits('binder2', binder2);
-			if (disconnected) addHits('disconnected', disconnected);
-			if (unhandled) addHits('unhandled', unhandled);
-			addHits('lastScraps', lastScraps);
-
-			const report = missingIds.map(id => ({
-				id,
-				lists: Array.from(listHits.get(id) || [])
-			}));
-			console.log('Missing nucleotide IDs:', missingIds);
-			console.log('Missing membership report:', report);
-		}
-		return { helices, missing };
+		return { helices };
 	}
 }

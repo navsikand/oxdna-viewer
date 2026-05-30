@@ -39,7 +39,6 @@ interface Window {
 
 class ScadnanoExportManager {
     private currentScadnanoHelices: Nucleotide[][] | null = null;
-    private currentScadnanoMissing: Nucleotide[] = [];
     private currentScadnanoConnections: Array<[number, number]> = [];
     private currentScadnanoLayout: ScadnanoPreparedLayout | null = null;
 
@@ -289,10 +288,9 @@ class ScadnanoExportManager {
             }
         });
 
-        const result = helix.findHelices(nucleotideElements, 3) as { helices: Nucleotide[][]; missing: Nucleotide[] };
+        const result = helix.findHelices(nucleotideElements, 3) as { helices: Nucleotide[][] };
         const helices = result?.helices ?? [];
-        this.currentScadnanoMissing = Array.isArray(result?.missing) ? result.missing : [];
-        this.notifyHelixCoverageMismatch(helices, nucleotideElements, this.currentScadnanoMissing);
+        this.notifyHelixCoverageMismatch(helices, nucleotideElements);
         return helices;
     }
 
@@ -351,14 +349,13 @@ class ScadnanoExportManager {
 
     private notifyHelixCoverageMismatch(
         helices: Nucleotide[][],
-        inputMap: Map<number, Nucleotide>,
-        missing: Nucleotide[] = []
+        inputMap: Map<number, Nucleotide>
     ): void {
         const helixCount = helices.flat().length;
         const totalCount = inputMap.size;
         if (helixCount === totalCount) return;
 
-        const missingCount = missing.length || (totalCount - helixCount);
+        const missingCount = totalCount - helixCount;
 
         notify(
             `Helix mapping error: ${helixCount}/${totalCount} nucleotides were mapped. Missing ${missingCount} nucleotides.`,
@@ -512,23 +509,6 @@ class ScadnanoExportManager {
         selectElements(helix);
     }
 
-    private selectMissingNucleotides(): void {
-        this.ensureScadnanoHelicesCache();
-
-        if (!this.currentScadnanoMissing.length) {
-            notify('No missing nucleotides detected from helix mapping.', 'warning');
-            return;
-        }
-
-        const selectElements = window.api?.selectElements;
-        if (typeof selectElements !== 'function') {
-            notify('Selection API is unavailable.', 'warning');
-            return;
-        }
-
-        selectElements(this.currentScadnanoMissing);
-    }
-
     private ensureScadnanoGridEditor(gridType: ScadnanoGridType): any | null {
         if (this.scadnanoGridEditor && this.scadnanoGridEditorType === gridType) return this.scadnanoGridEditor;
 
@@ -579,13 +559,6 @@ class ScadnanoExportManager {
             exportBtn.addEventListener('click', () => {
                 this.publishCurrentHelixPosFromEditor();
                 this.exportFromGridView(window.currentScadnanoHelixPos);
-            });
-        }
-
-        const missingBtn = document.getElementById('scadnanoGridMissingBtn');
-        if (missingBtn) {
-            missingBtn.addEventListener('click', () => {
-                this.selectMissingNucleotides();
             });
         }
 

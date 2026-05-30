@@ -5,7 +5,7 @@
 /*
 Here's an easy way to use this code:
 
-    const {helices,missing} = helix.findHelices(elements,3)
+    const {helices} = helix.findHelices(elements,3)
 
     const { grid, binderHelices } = toscad.setGrid(helices);
     toscad.directionAlign2(grid);
