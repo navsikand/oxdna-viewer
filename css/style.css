@@ -96,6 +96,10 @@ body.scadnano-grid-open #scadnanoGridPane {
   display: block;
 }
 
+/* Show gridview-only floating-menu items only while the scadnano grid is open. */
+.gridview-only { display: none; }
+body.scadnano-grid-open .gridview-only { display: inline-flex; }
+
 canvas {
     position: absolute;
     height: 100%;

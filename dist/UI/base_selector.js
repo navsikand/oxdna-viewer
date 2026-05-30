@@ -116,6 +116,19 @@ canvas.addEventListener('mousedown', event => {
                     }));
                     updateView(sys);
                     break;
+                case "Helix": {
+                    const helices = window.scadnanoGetHelices?.();
+                    const helixId = helices ? toscad.findHelixID(nucleotide.id, helices) : null;
+                    if (helixId !== null && helices) {
+                        const helixIds = new Set(helices[helixId].map(n => n.id));
+                        sys.strands.forEach(strand => strand.forEach(e => {
+                            if (helixIds.has(e.id))
+                                e.toggle();
+                        }));
+                        updateView(sys);
+                    }
+                    break;
+                }
             }
             if (tmpSystems.length !== 0) {
                 tmpSystems.forEach((sys) => {
@@ -548,23 +561,49 @@ document.addEventListener('keydown', function (event) {
     if (target && target.tagName === 'INPUT') {
         return;
     }
-    if (event.code === "Digit1") {
-        changeSelectionMode('Monomer');
+    const gridOpen = document.body.classList.contains('scadnano-grid-open');
+    if (gridOpen) {
+        if (event.code === "Digit1") {
+            changeSelectionMode('Monomer');
+        }
+        else if (event.code === "Digit2") {
+            changeSelectionMode('Strand');
+        }
+        else if (event.code === "Digit3") {
+            changeSelectionMode('Helix');
+        }
+        else if (event.code === "Digit4") {
+            changeSelectionMode('System');
+        }
+        else if (event.code === "Digit5") {
+            changeSelectionMode('Cluster');
+        }
+        else if (event.code === "Digit6") {
+            changeSelectionMode('Box');
+        }
+        else if (event.code === "Digit7") {
+            document.getElementById('selectPairs').classList.toggle('active');
+        }
     }
-    else if (event.code === "Digit2") {
-        changeSelectionMode('Strand');
-    }
-    else if (event.code === "Digit3") {
-        changeSelectionMode('System');
-    }
-    else if (event.code === "Digit4") {
-        changeSelectionMode('Cluster');
-    }
-    else if (event.code === "Digit5") {
-        changeSelectionMode('Box');
-    }
-    else if (event.code === "Digit6") {
-        document.getElementById('selectPairs').classList.toggle('active');
+    else {
+        if (event.code === "Digit1") {
+            changeSelectionMode('Monomer');
+        }
+        else if (event.code === "Digit2") {
+            changeSelectionMode('Strand');
+        }
+        else if (event.code === "Digit3") {
+            changeSelectionMode('System');
+        }
+        else if (event.code === "Digit4") {
+            changeSelectionMode('Cluster');
+        }
+        else if (event.code === "Digit5") {
+            changeSelectionMode('Box');
+        }
+        else if (event.code === "Digit6") {
+            document.getElementById('selectPairs').classList.toggle('active');
+        }
     }
 });
 function colorSelectorWrapper() {

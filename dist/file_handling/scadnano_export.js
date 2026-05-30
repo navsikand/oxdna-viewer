@@ -6,6 +6,7 @@ class ScadnanoExportManager {
     currentScadnanoLayout = null;
     scadnanoGridEditor = null;
     scadnanoGridEditorType = null;
+    suppressNodeSelectedCallback = false;
     constructor() {
         this.initScadnanoGridPaneControls();
     }
@@ -71,6 +72,9 @@ class ScadnanoExportManager {
             gridDropdown.disabled = !checkboxElement.checked;
         }
     }
+    getHelices() {
+        return this.ensureScadnanoHelicesCache();
+    }
     selectHelixFromNucleotide(nucleotideInput) {
         if (!document.body.classList.contains('scadnano-grid-open'))
             return;
@@ -87,7 +91,13 @@ class ScadnanoExportManager {
         const helixId = toscad.findHelixID(nucleotide.id, helices);
         if (helixId === null)
             return;
-        this.scadnanoGridEditor.selectNodeById(helixId);
+        this.suppressNodeSelectedCallback = true;
+        try {
+            this.scadnanoGridEditor.selectNodeById(helixId);
+        }
+        finally {
+            this.suppressNodeSelectedCallback = false;
+        }
     }
     runDialogExport(options) {
         if (!options.includeHelixPos) {
@@ -424,6 +434,8 @@ class ScadnanoExportManager {
             this.publishCurrentHelixPosFromEditor();
         };
         this.scadnanoGridEditor.onNodeSelected = (node) => {
+            if (this.suppressNodeSelectedCallback)
+                return;
             const helixId = Number(node?.id);
             if (!Number.isFinite(helixId))
                 return;
@@ -497,6 +509,7 @@ function registerScadnanoWindowApi() {
     window.scadnanoSelectHelixFromNucleotide = (nucleotideInput) => {
         scadnanoManager.selectHelixFromNucleotide(nucleotideInput);
     };
+    window.scadnanoGetHelices = () => scadnanoManager.getHelices();
 }
 registerScadnanoWindowApi();
 // Keep these named wrappers for inline HTML handlers and backwards compatibility.

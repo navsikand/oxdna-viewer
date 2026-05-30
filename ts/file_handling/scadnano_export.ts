@@ -35,6 +35,7 @@ interface Window {
     scadnanoDialogExport?: () => void;
     toggleGridDropdown?: (checkboxElement: HTMLInputElement) => void;
     scadnanoSelectHelixFromNucleotide?: (nucleotideInput?: unknown) => void;
+    scadnanoGetHelices?: () => Nucleotide[][] | null;
 }
 
 class ScadnanoExportManager {
@@ -44,6 +45,7 @@ class ScadnanoExportManager {
 
     private scadnanoGridEditor: any = null;
     private scadnanoGridEditorType: ScadnanoGridType | null = null;
+    private suppressNodeSelectedCallback = false;
 
     constructor() {
         this.initScadnanoGridPaneControls();
@@ -123,6 +125,10 @@ class ScadnanoExportManager {
         }
     }
 
+    public getHelices(): Nucleotide[][] | null {
+        return this.ensureScadnanoHelicesCache();
+    }
+
     public selectHelixFromNucleotide(nucleotideInput?: unknown): void {
         if (!document.body.classList.contains('scadnano-grid-open')) return;
         if (!this.scadnanoGridEditor || typeof this.scadnanoGridEditor.selectNodeById !== 'function') return;
@@ -139,7 +145,12 @@ class ScadnanoExportManager {
         const helixId = toscad.findHelixID(nucleotide.id, helices);
         if (helixId === null) return;
 
-        this.scadnanoGridEditor.selectNodeById(helixId);
+        this.suppressNodeSelectedCallback = true;
+        try {
+            this.scadnanoGridEditor.selectNodeById(helixId);
+        } finally {
+            this.suppressNodeSelectedCallback = false;
+        }
     }
 
     private runDialogExport(options: ScadnanoDialogOptions): void {
@@ -538,6 +549,7 @@ class ScadnanoExportManager {
         };
 
         this.scadnanoGridEditor.onNodeSelected = (node: any) => {
+            if (this.suppressNodeSelectedCallback) return;
             const helixId = Number(node?.id);
             if (!Number.isFinite(helixId)) return;
             this.selectHelixFromGridNode(helixId);
@@ -623,6 +635,8 @@ function registerScadnanoWindowApi(): void {
     window.scadnanoSelectHelixFromNucleotide = (nucleotideInput?: unknown) => {
         scadnanoManager.selectHelixFromNucleotide(nucleotideInput);
     };
+
+    window.scadnanoGetHelices = () => scadnanoManager.getHelices();
 }
 
 registerScadnanoWindowApi();
