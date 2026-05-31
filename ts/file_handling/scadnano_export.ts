@@ -79,6 +79,116 @@ class ScadnanoExportManager {
         }
     }
 
+    // Triggered by the "Combine" button in the grid view.
+    // Merges the helices currently selected in the grid editor into the lowest-numbered one,
+    public combineSelectedHelicesFromGridView(): void {
+        const editor = this.scadnanoGridEditor;
+        if (!editor) {
+            notify('Open the scadnano grid view before combining helices.', 'warning');
+            return;
+        }
+
+        const ids = typeof editor.getSelectedHelixIds === 'function'
+            ? editor.getSelectedHelixIds() as number[]
+            : [];
+
+        if (!Array.isArray(ids) || ids.length < 2) {
+            notify('Select two or more helices (cmd/ctrl+click) before combining.', 'warning');
+            return;
+        }
+
+        const helices = this.ensureScadnanoHelicesCache();
+        if (!helices) {
+            notify('Helix data is not yet available.', 'alert');
+            return;
+        }
+
+        const result = helix.combineHelices(helices, ids);
+        if (!result) {
+            notify('Nothing to combine.', 'warning');
+            return;
+        }
+
+        const { keptIdx, mergedIdx, idRemap } = result;
+        const removed = new Set<number>(mergedIdx);
+
+        // Walk a snapshot of editor nodes; remove merged-away entries and renumber the survivors
+        // (combineHelices spliced out the empty slots, so downstream indices shifted).
+        const remapId = (oldId: number): number | null => {
+            if (removed.has(oldId)) return keptIdx;
+            const next = idRemap.get(oldId);
+            return next === undefined ? null : next;
+        };
+
+        if (typeof editor.getNodes === 'function') {
+            const nodes = editor.getNodes() as Array<{ id: number; col: number; row: number; label?: string; color?: number }>;
+            // Rebuild the editor's nodes from the snapshot using the remapped ids — this preserves
+            // the user's col/row layout while collapsing duplicates and dropping merged-away nodes.
+            const remapped: Array<{ id: number; col: number; row: number; label?: string; color?: number }> = [];
+            const seenNew = new Set<number>();
+            nodes.forEach(node => {
+                const oldId = Number(node.id);
+                const newId = remapId(oldId);
+                if (newId === null) return;
+                if (seenNew.has(newId)) return; // skip duplicates (e.g. merged-away nodes mapping to keptIdx)
+                seenNew.add(newId);
+                remapped.push({ ...node, id: newId, label: String(newId) });
+            });
+            if (typeof editor.setNodes === 'function') {
+                editor.setNodes(remapped);
+            }
+        }
+
+        // Remap crossover connections through the same lookup. Drop self-loops (now-internal
+        // connections) and dedupe.
+        const remappedConnKeys = new Set<string>();
+        const updatedConnections: Array<[number, number]> = [];
+        this.currentScadnanoConnections.forEach(([from, to]) => {
+            const a = remapId(from);
+            const b = remapId(to);
+            if (a === null || b === null) return;
+            if (a === b) return;
+            const key = a < b ? `${a}:${b}` : `${b}:${a}`;
+            if (remappedConnKeys.has(key)) return;
+            remappedConnKeys.add(key);
+            updatedConnections.push([a, b]);
+        });
+        this.currentScadnanoConnections = updatedConnections;
+
+        if (typeof editor.setConnections === 'function') {
+            editor.setConnections(this.currentScadnanoConnections);
+        }
+
+        if (this.currentScadnanoLayout) {
+            // Remap helixIds inside the cached GridMap. Every nucleotide in a merged-away helix
+            // now reports keptIdx; every survivor's id shifts down through idRemap.
+            this.currentScadnanoLayout.grid.forEach(mark => {
+                const newId = remapId(mark.helixId);
+                if (newId === null) return;
+                mark.helixId = newId;
+            });
+
+            // Refresh helixPos from the editor — its node set already reflects the merge.
+            const refreshed = new Map<number, [number, number]>();
+            const nodes = typeof editor.getNodes === 'function'
+                ? editor.getNodes() as Array<{ id: number; col: number; row: number }>
+                : [];
+            nodes.forEach(node => {
+                refreshed.set(Number(node.id), [Number(node.col), Number(node.row)]);
+            });
+            this.currentScadnanoLayout.helixPos = refreshed;
+        }
+
+        if (typeof editor.clearSelection === 'function') {
+            editor.clearSelection();
+        }
+
+        // Refresh the published helix-pos map from the editor (it just lost a few nodes).
+        this.publishCurrentHelixPosFromEditor();
+
+        notify(`Combined helix ${mergedIdx.join(', ')} into helix ${keptIdx}.`);
+    }
+
     public showGridFromHelixPos(helixPosInput?: unknown, gridTypeInput?: unknown): void {
         const pane = this.getScadnanoGridPane();
         if (!pane) {
@@ -571,6 +681,13 @@ class ScadnanoExportManager {
             exportBtn.addEventListener('click', () => {
                 this.publishCurrentHelixPosFromEditor();
                 this.exportFromGridView(window.currentScadnanoHelixPos);
+            });
+        }
+
+        const combineBtn = document.getElementById('scadnanoGridCombineBtn');
+        if (combineBtn) {
+            combineBtn.addEventListener('click', () => {
+                this.combineSelectedHelicesFromGridView();
             });
         }
 

@@ -191,6 +191,7 @@ namespace scadnano {
         private hasDragged = false;
         private panLast    = new THREE.Vector2();
         private selectedKey: string | null = null;
+        private selectedKeys: Set<string> = new Set();
         private draggingNodeKey: string | null = null;
         private draggingPointer: { x: number; y: number } | null = null;
 
@@ -316,6 +317,7 @@ namespace scadnano {
 
             this.records.delete(key);
             if (this.selectedKey === key) this.selectedKey = null;
+            if (this.selectedKeys.has(key)) this.selectedKeys.delete(key);
             if (this.draggingNodeKey === key) this.draggingNodeKey = null;
             this._rebuildConnectionLines();
             this.onNodesChanged?.();
@@ -324,6 +326,7 @@ namespace scadnano {
         /** Replace the entire node set. */
         setNodes(nodes: HelixNode[]): void {
             this._setSelectedKey(null);
+            this.selectedKeys.clear();
             this.draggingNodeKey = null;
             const keys = Array.from(this.records.keys());
             keys.forEach(k => {
@@ -368,6 +371,35 @@ namespace scadnano {
                     return;
                 }
             }
+        }
+
+        /** Get the helix ids of all currently selected nodes (primary + multi-selected). */
+        getSelectedHelixIds(): number[] {
+            const ids: number[] = [];
+            const seen = new Set<number>();
+            const collect = (key: string | null) => {
+                if (!key) return;
+                const rec = this.records.get(key);
+                if (!rec) return;
+                const id = Number(rec.node.id);
+                if (!Number.isFinite(id) || seen.has(id)) return;
+                seen.add(id);
+                ids.push(id);
+            };
+            collect(this.selectedKey);
+            this.selectedKeys.forEach(k => collect(k));
+            return ids;
+        }
+
+        /** Clear all selection state (primary + multi). */
+        clearSelection(): void {
+            // Walk multi-selection and turn off ring highlight on each.
+            this.selectedKeys.forEach(k => {
+                const rec = this.records.get(k);
+                if (rec) this._setRecordSelected(rec, false);
+            });
+            this.selectedKeys.clear();
+            this._setSelectedKey(null);
         }
 
         /** Expand the pre-rendered ghost extent. */
@@ -458,7 +490,10 @@ namespace scadnano {
 
             if (this.selectedKey) {
                 const prev = this.records.get(this.selectedKey);
-                if (prev) this._setRecordSelected(prev, false);
+                // Only clear the highlight if the previous primary isn't held by multi-select.
+                if (prev && !this.selectedKeys.has(this.selectedKey)) {
+                    this._setRecordSelected(prev, false);
+                }
             }
 
             this.selectedKey = nextKey;
@@ -470,6 +505,24 @@ namespace scadnano {
 
             const selectedNode = this.selectedKey ? this.records.get(this.selectedKey)?.node ?? null : null;
             this.onNodeSelected?.(selectedNode ? { ...selectedNode } : null);
+        }
+
+        // Toggle a key's membership in the multi-select set. Used by ctrl/cmd+click.
+        private _toggleMultiSelectKey(key: string): void {
+            const rec = this.records.get(key);
+            if (!rec) return;
+
+            if (this.selectedKeys.has(key)) {
+                this.selectedKeys.delete(key);
+                // Don't dim the ring if this key is also the primary selection.
+                if (this.selectedKey !== key) {
+                    this._setRecordSelected(rec, false);
+                }
+                return;
+            }
+
+            this.selectedKeys.add(key);
+            this._setRecordSelected(rec, true);
         }
 
         private _cellFromMouseEvent(e: MouseEvent): { col: number; row: number } | null {
@@ -571,6 +624,10 @@ namespace scadnano {
             this._expandGridToIncludeCell(toCol, toRow);
 
             if (this.selectedKey === fromKey) this.selectedKey = toKey;
+            if (this.selectedKeys.has(fromKey)) {
+                this.selectedKeys.delete(fromKey);
+                this.selectedKeys.add(toKey);
+            }
             this._rebuildConnectionLines();
             this.onNodesChanged?.();
             return toKey;
@@ -714,9 +771,24 @@ namespace scadnano {
             if (!cell) return;
 
             const key = this._key(cell.col, cell.row);
-            if (this.records.has(key)) {
-                this._setSelectedKey(key);
+            if (!this.records.has(key)) return;
+
+            // Ctrl/Cmd+click: toggle multi-selection without disturbing the primary selection.
+            if (e.ctrlKey || e.metaKey) {
+                this._toggleMultiSelectKey(key);
+                return;
             }
+
+            // Plain click: clear any multi-selection extras and select this node.
+            if (this.selectedKeys.size) {
+                this.selectedKeys.forEach(k => {
+                    if (k === key) return;
+                    const rec = this.records.get(k);
+                    if (rec) this._setRecordSelected(rec, false);
+                });
+                this.selectedKeys.clear();
+            }
+            this._setSelectedKey(key);
         }
 
         private _onMouseDown(e: MouseEvent): void {
@@ -733,6 +805,8 @@ namespace scadnano {
                 const cell = this._cellFromMouseEvent(e);
                 if (!cell) return;
                 const key = this._key(cell.col, cell.row);
+                // Skip drag init when ctrl/cmd is held — that gesture is for multi-select toggle.
+                if (e.ctrlKey || e.metaKey) return;
                 if (key === this.selectedKey && this.records.has(key)) {
                     this.draggingNodeKey = key;
                     this.draggingPointer = { x: e.clientX, y: e.clientY };

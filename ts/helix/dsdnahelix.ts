@@ -1328,4 +1328,70 @@ namespace helix {
 		return { helices };
 	}
 
+	// Merge two or more helices into the one with the lowest index.
+	// Mutates `helices` in place: pushes nucleotides from higher-indexed entries into the kept helix
+	// and SPLICES those entries out, so the array shrinks. Returns an `idRemap` (oldIdx -> newIdx)
+	// that callers must use to fix any external references that key off helix index — gridview node
+	// ids, crossover connection ids, cached GridMap helixIds, etc.
+	// No checks for grid layout or overlap — that is the caller's responsibility.
+	export function combineHelices(
+		helices: Nucleotide[][],
+		indices: number[]
+	): { keptIdx: number; mergedIdx: number[]; idRemap: Map<number, number> } | null {
+		if (!Array.isArray(helices) || !Array.isArray(indices)) return null;
+
+		const valid: number[] = [];
+		const seenIdx = new Set<number>();
+		indices.forEach(raw => {
+			const i = Number(raw);
+			if (!Number.isInteger(i)) return;
+			if (i < 0 || i >= helices.length) return;
+			if (!Array.isArray(helices[i]) || helices[i].length === 0) return;
+			if (seenIdx.has(i)) return;
+			seenIdx.add(i);
+			valid.push(i);
+		});
+
+		if (valid.length < 2) return null;
+
+		valid.sort((a, b) => a - b);
+		const keptIdxOld = valid[0];
+		const mergedIdxOld = valid.slice(1);
+
+		// Move nucleotides into the kept helix, deduping by id.
+		const seenNts = new Set<number>(helices[keptIdxOld].map(nt => nt.id));
+		mergedIdxOld.forEach(idx => {
+			helices[idx].forEach(nt => {
+				if (seenNts.has(nt.id)) return;
+				seenNts.add(nt.id);
+				helices[keptIdxOld].push(nt);
+			});
+		});
+
+		// Build an oldIdx -> newIdx remap for every helix that survives the splice.
+		// Removed indices intentionally have no entry; callers should substitute the kept helix
+		// when they encounter a reference to a removed index.
+		const removed = new Set<number>(mergedIdxOld);
+		const idRemap = new Map<number, number>();
+		let shift = 0;
+		for (let i = 0; i < helices.length; i++) {
+			if (removed.has(i)) {
+				shift += 1;
+				continue;
+			}
+			idRemap.set(i, i - shift);
+		}
+
+		// Splice in reverse so earlier indices stay valid during removal.
+		for (let i = helices.length - 1; i >= 0; i--) {
+			if (removed.has(i)) helices.splice(i, 1);
+		}
+
+		// keptIdx is the lowest valid index, so nothing in front of it was removed: its new index
+		// is the same as its old one. Look it up via idRemap to stay correct if this invariant ever changes.
+		const keptIdx = idRemap.get(keptIdxOld) ?? keptIdxOld;
+
+		return { keptIdx, mergedIdx: mergedIdxOld, idRemap };
+	}
+
 }
