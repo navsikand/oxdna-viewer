@@ -413,7 +413,7 @@ namespace helix {
 		// Stored as segments so grouped leftovers (e.g. deferred ssScaffold segments) stay together.
 		const lastScraps: Nucleotide[][] = [];
 		if (!partials.length) return { helices, lastScraps }; // surely no helices if no partials.
-		const dot = 0.707;
+		const dot = 0.5;
 
 		// quick lookup for id to partial index and stubs index.
 		const idToPartial = new Map<number, number>();
@@ -500,7 +500,33 @@ namespace helix {
 			return null;
 		};
 
-		// Track direct adjacency between partials and collect stubs links for a second pass.
+		// Each partial has up to 2 sides (from mapPartialEnds). One side gets at most 1 connection to another partial. 
+		// Build (partialIdx, ntId) -> sideIdx (0 or 1) so any exit-nt resolves to its side.
+		const partialEndsMap = mapPartialEnds(partials);
+		const ntToSide = new Map<number, Map<number, number>>();
+		const sideCount = new Map<number, number>(); // partialIdx -> number of usable sides (0,1,2)
+		partials.forEach((_, pIdx) => {
+			const ends = partialEndsMap.get(pIdx);
+			const inner = new Map<number, number>();
+			ntToSide.set(pIdx, inner);
+			if (!ends) {
+				sideCount.set(pIdx, 0);
+				return;
+			}
+			// Side 0: start1 (5' of strand A) paired with end2 (3' of strand B)
+			inner.set(ends.start1.id, 0);
+			inner.set(ends.end2.id, 0);
+			// Side 1: end1 (3' of strand A) paired with start2 (5' of strand B)
+			inner.set(ends.end1.id, 1);
+			inner.set(ends.start2.id, 1);
+			sideCount.set(pIdx, 2);
+		});
+
+		const getSideForNt = (pIdx: number, ntId: number): number | undefined => {
+			return ntToSide.get(pIdx)?.get(ntId);
+		};
+
+		// Track direct adjacency between partials (used for stub-bridge safety check).
 		const partialAdj = new Map<number, Set<number>>();
 		const addPartialAdj = (a: number, b: number) => {
 			if (a === b) return;
@@ -512,30 +538,31 @@ namespace helix {
 			partialAdj.set(b, setB);
 		};
 
-		// Only attach at max 2. Store all candidates and their dot-scores.
-		const partialLinks = new Map<number, Map<number, number>>();
-		const addPartialLink = (a: number, b: number, score: number) => {
+		// Direct partial<->partial edges with side info.
+		// Each strand crossing between two partials produces one edge. By construction, two paired
+		// nucleotides on the same side cannot both cross into the same partial (they would have
+		// been part of that partial), so per-strand crossings won't collide on the same side-pair.
+		type DirectEdge = { a: number; sideA: number; b: number; sideB: number; dots: number };
+		const directEdges: DirectEdge[] = [];
+		const addDirectEdge = (a: number, sideA: number, b: number, sideB: number, dots: number) => {
 			if (a === b) return;
-			const linksA = partialLinks.get(a) || new Map<number, number>();
-			const prevA = linksA.get(b);
-			if (prevA === undefined || score > prevA) linksA.set(b, score);
-			partialLinks.set(a, linksA);
-			const linksB = partialLinks.get(b) || new Map<number, number>();
-			const prevB = linksB.get(a);
-			if (prevB === undefined || score > prevB) linksB.set(a, score);
-			partialLinks.set(b, linksB);
+			directEdges.push({ a, sideA, b, sideB, dots });
 		};
+
+		// Stub -> partial links. Track which side of the partial the stub connects to,
+		// so stub-bridge edges between two partials know which sides they would consume.
 		type stubsLink = {
 			partialIdx: number;
-			score: number;
+			dots: number;
 			strand: Strand;
+			partialSide: number;
 		};
 		const stubsLinks = new Map<number, Map<number, stubsLink>>();
-		const addstubsLink = (stubNode: number, partialIdx: number, score: number, strand: Strand) => {
+		const addstubsLink = (stubNode: number, partialIdx: number, dots: number, strand: Strand, partialSide: number) => {
 			const links = stubsLinks.get(stubNode) || new Map<number, stubsLink>();
 			const prev = links.get(partialIdx);
-			if (!prev || score > prev.score) {
-				links.set(partialIdx, { partialIdx, score, strand });
+			if (!prev || dots > prev.dots) {
+				links.set(partialIdx, { partialIdx, dots, strand, partialSide });
 			}
 			stubsLinks.set(stubNode, links);
 		};
@@ -554,7 +581,7 @@ namespace helix {
 			return vecA.dot(vecB);
 		};
 
-		// Only connect nodes that are adjacent on the same strand and whose A3 vectors align.
+		// First pass. Collects all data for connections (partial-partial or partial-stubs)
 		systems.forEach(system => {
 			system.strands.forEach(strand => {
 				let prev: Nucleotide | null = null;
@@ -564,24 +591,24 @@ namespace helix {
 						const nodeA = getNodeRef(prev);
 						const nodeB = getNodeRef(nt);
 						if (nodeA && nodeB && nodeA.node !== nodeB.node) {
-							// find adjacency between partials. Reason being, this will then be used for stubs connection checks later.
-							// without this, funny unintended behavior CAN happen.
-							// Example scenario: comment this part out and try running this code on Dumbbell Structure (nanobase 51). Helix 34/35 will be merged, unfortunately.
 							if (nodeA.kind === 'partial' && nodeB.kind === 'partial') {
 								addPartialAdj(nodeA.index, nodeB.index);
 							}
 							const d = attachDot(nodeA, nodeB, strand);
 							if (d > dot) {
 								if (nodeA.kind === 'partial' && nodeB.kind === 'partial') {
-									addPartialLink(nodeA.index, nodeB.index, d);
+									// prev is the exit-nt of nodeA's partial; nt is the entry-nt of nodeB's partial.
+									// code does not account for any partials that don't go into mapPartialEnds().
+									const sideA = getSideForNt(nodeA.index, prev.id)!;
+									const sideB = getSideForNt(nodeB.index, nt.id)!;
+									addDirectEdge(nodeA.index, sideA, nodeB.index, sideB, d);
 								} else if (nodeA.kind === 'stubs' || nodeB.kind === 'stubs') {
-									// if either of the nodes are stubs, then checks are necessary.
-									// add this to a "link". They will be processed in the 2nd pass. Slows down but much more accurate.
 									const stubNode = nodeA.kind === 'stubs' ? nodeA : nodeB;
 									const otherNode = nodeA.kind === 'stubs' ? nodeB : nodeA;
-									// does not do anything if both nodes are stubs.
+									const otherNt = nodeA.kind === 'stubs' ? nt : prev;
 									if (otherNode.kind === 'partial') {
-										addstubsLink(stubNode.node, otherNode.index, d, strand);
+										const partialSide = getSideForNt(otherNode.index, otherNt.id)!;
+										addstubsLink(stubNode.node, otherNode.index, d, strand, partialSide);
 									}
 								}
 							}
@@ -592,49 +619,36 @@ namespace helix {
 			});
 		});
 
-		// Attach max 2 partials.
-		const partialAttachCount = new Map<number, number>();
-		const partialTop2 = new Map<number, Set<number>>();
-		partialLinks.forEach((neighbors, idx) => {
-			const top = Array.from(neighbors.entries())
-				.sort((a, b) => b[1] - a[1])
-				.slice(0, 2)
-				.map(([id]) => id);
-			partialTop2.set(idx, new Set(top));
-		});
-		const usedEdges = new Set<string>();
-		partialTop2.forEach((neighbors, a) => {
-			neighbors.forEach(b => {
-				if (a === b) return;
-				const setB = partialTop2.get(b);
-				if (!setB || !setB.has(a)) return;
-				const key = a < b ? `${a}:${b}` : `${b}:${a}`;
-				if (usedEdges.has(key)) return;
-				const countA = partialAttachCount.get(a) ?? 0;
-				const countB = partialAttachCount.get(b) ?? 0;
-				if (countA >= 2 || countB >= 2) return;
-				usedEdges.add(key);
-				unite(a, b);
-				partialAttachCount.set(a, countA + 1);
-				partialAttachCount.set(b, countB + 1);
-			});
-		});
+		// Track which (partialIdx, sideIdx) slots are already used by a partial-partial connection.
+		const consumedSides = new Set<string>();
+		const consumedKey = (pIdx: number, side: number) => `${pIdx}:${side}`;
+		const isSideConsumed = (pIdx: number, side: number) => consumedSides.has(consumedKey(pIdx, side));
+		const consumeSide = (pIdx: number, side: number) => consumedSides.add(consumedKey(pIdx, side));
 
-		// Second pass: attach stubs after partial unions are finalized.
-		const partialParent = Array.from({ length: partials.length }, (_, i) => find(i));
+		/* 
+		Mutual-agreement filter:
+		For each (partial P, side σ_P), we look at every direct edge incident to that side and
+		keep only edges (P, σ_P) <-> (Q, σ_Q) where Q's side σ_Q would also rank P among its top
+		candidates. Since we already cap at "1 per side", a side has effectively top-1 candidates,
+		so mutual agreement reduces to: σ_Q's best candidate (by dots) toward this junction is P.
+		We approximate this with a sort+greedy pass below: among all surviving direct edges for a
+		side, only the highest-dot edge can ever win. If the other side's highest-dot edge also
+		names the same counterpart, both will agree naturally during the greedy pass.
+		*/
+
+		// Union-find helpers needed before the greedy pass for partial-group operations.
+		const partialParent = Array.from({ length: partials.length }, (_, i) => i);
 		const findPartial = (x: number): number => (partialParent[x] === x ? x : partialParent[x] = findPartial(partialParent[x]));
 		const partialMembers = new Map<number, Set<number>>();
 		for (let i = 0; i < partials.length; i++) {
-			const root = findPartial(i);
-			const set = partialMembers.get(root) || new Set<number>();
+			const set = partialMembers.get(i) || new Set<number>();
 			set.add(i);
-			partialMembers.set(root, set);
+			partialMembers.set(i, set);
 		}
-		// merging partials connected via a stubs.
 		const mergePartialGroups = (a: number, b: number) => {
 			let ra = findPartial(a);
 			let rb = findPartial(b);
-			if (ra === rb) return ra; // they are already united
+			if (ra === rb) return ra;
 			const setA = partialMembers.get(ra)!;
 			const setB = partialMembers.get(rb)!;
 			if (setA.size < setB.size) {
@@ -650,8 +664,6 @@ namespace helix {
 			partialParent[rb] = ra;
 			return ra;
 		};
-		// if the 2 "helices" (partial groups) are to be merged, then they can NOT have connections amongst each other. 
-		// if they do, then the one of the helix "turned around" to connect somewhere, and therefore should not be merged because it is now a different helix.
 		const hasDirectConnection = (rootA: number, rootB: number) => {
 			if (rootA === rootB) return true;
 			const setA = partialMembers.get(rootA);
@@ -668,51 +680,91 @@ namespace helix {
 			return false;
 		};
 
+		// Build stub-bridge edges. For each stub with >= 2 partial links, generate pairwise edges
+		// between its candidate partials. The dot used is the partial<->partial alignment
+		type StubEdge = {
+			a: number; sideA: number;
+			b: number; sideB: number;
+			dots: number;
+			stubNode: number;
+		};
+		const stubEdges: StubEdge[] = [];
 		const partialsBridgeDot = (a: stubsLink, b: stubsLink) => {
 			const vecA = getPartialStrandA3(a.partialIdx, a.strand);
 			const vecB = getPartialStrandA3(b.partialIdx, b.strand);
 			if (!vecA || !vecB) return -1;
 			return vecA.dot(vecB);
 		};
-
 		stubsLinks.forEach((linksByPartial, stubNode) => {
-			const candidates = Array.from(linksByPartial.values()).sort((a, b) => b.score - a.score);
-			if (!candidates.length) return;
-
-			// stubs belongs to the best-aligned partial by default.
-			const primaryLink = candidates[0];
-			const primaryIdx = primaryLink.partialIdx;
-			let primaryRoot = findPartial(primaryLink.partialIdx);
-			unite(stubNode, primaryRoot);
-
-			// Bridge to additional partial groups only when the partials also align.
-			const bridgeCandidates = candidates
-				.slice(1)
-				.map(candidate => ({
-					candidate,
-					dot: partialsBridgeDot(primaryLink, candidate)
-				}))
-				.filter(item => item.dot > dot)
-				.sort((a, b) => b.dot - a.dot)
-				.slice(0, 2);
-			for (const item of bridgeCandidates) {
-				const candidate = item.candidate;
-				const countPrimary = partialAttachCount.get(primaryIdx) ?? 0;
-				const countOther = partialAttachCount.get(candidate.partialIdx) ?? 0;
-				if (countPrimary >= 2 || countOther >= 2) continue;
-
-				const currPrimaryRoot = findPartial(primaryRoot);
-				const otherRoot = findPartial(candidate.partialIdx);
-				if (currPrimaryRoot === otherRoot) continue;
-				if (hasDirectConnection(currPrimaryRoot, otherRoot)) {
-					continue; // block stubs merge across already-connected helices
+			const candidates = Array.from(linksByPartial.values());
+			if (candidates.length < 2) return;
+			for (let i = 0; i < candidates.length; i++) {
+				for (let j = i + 1; j < candidates.length; j++) {
+					const a = candidates[i];
+					const b = candidates[j];
+					const d = partialsBridgeDot(a, b);
+					if (d > dot) {
+						stubEdges.push({
+							a: a.partialIdx, sideA: a.partialSide,
+							b: b.partialIdx, sideB: b.partialSide,
+							dots: d,
+							stubNode
+						});
+					}
 				}
-
-				unite(stubNode, otherRoot);
-				primaryRoot = mergePartialGroups(currPrimaryRoot, otherRoot);
-				partialAttachCount.set(primaryIdx, countPrimary + 1);
-				partialAttachCount.set(candidate.partialIdx, countOther + 1);
 			}
+		});
+
+		// list of candidates that can be paired (for partial-partial and partial-stub-partials). Sorted descending order.
+		// A stub-bridge edge with high dots can win over a lower-dots direct edge (per requirement 2).
+		type Candidate =
+			| { kind: 'direct'; a: number; sideA: number; b: number; sideB: number; dots: number }
+			| { kind: 'stub'; a: number; sideA: number; b: number; sideB: number; dots: number; stubNode: number };
+		const candidates: Candidate[] = [];
+		directEdges.forEach(e => candidates.push({ kind: 'direct', ...e }));
+		stubEdges.forEach(e => candidates.push({ kind: 'stub', ...e }));
+		candidates.sort((x, y) => y.dots - x.dots);
+
+
+		// pick the highest-dots edge whose sides are still free and whose endpoints aren't already in the same group. 
+		// For stub bridges, also reject if the two groups already have a direct partial-partial connection (preserves the existing safeguard).
+		//
+		// Why the same-group check matters: as edges are accepted, partials get merged via
+		// union-find. A later edge between two partials that are already in the same group
+		// would be redundant — connecting them again does nothing structurally, but it would
+		// still consume two sides, blocking those sides from a real cross-group merge.
+		for (const c of candidates) {
+			if (c.kind === 'direct') {
+				if (isSideConsumed(c.a, c.sideA)) continue;
+				if (isSideConsumed(c.b, c.sideB)) continue;
+				const rootA = findPartial(c.a);
+				const rootB = findPartial(c.b);
+				if (rootA === rootB) continue;
+				unite(c.a, c.b);
+				mergePartialGroups(c.a, c.b);
+				consumeSide(c.a, c.sideA);
+				consumeSide(c.b, c.sideB);
+			} else {
+				if (isSideConsumed(c.a, c.sideA)) continue;
+				if (isSideConsumed(c.b, c.sideB)) continue;
+				const rootA = findPartial(c.a);
+				const rootB = findPartial(c.b);
+				if (rootA === rootB) continue;
+				if (hasDirectConnection(rootA, rootB)) continue;
+				unite(c.stubNode, c.a);
+				unite(c.stubNode, c.b);
+				mergePartialGroups(c.a, c.b);
+				consumeSide(c.a, c.sideA);
+				consumeSide(c.b, c.sideB);
+			}
+		}
+
+		// Stubs join the best-aligned partial through A3 dots.
+		stubsLinks.forEach((linksByPartial, stubNode) => {
+			const ranked = Array.from(linksByPartial.values()).sort((x, y) => y.dots - x.dots);
+			if (!ranked.length) return;
+			const primary = ranked[0];
+			unite(stubNode, primary.partialIdx);
 		});
 
 		const groups = new Map<number, Nucleotide[]>();
