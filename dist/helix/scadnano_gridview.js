@@ -162,6 +162,13 @@ var scadnano;
         onNodesChanged = null;
         // Callback fired when the selected node changes
         onNodeSelected = null;
+        // Callback fired when a user drag finishes and the node landed on a new cell.
+        // Suppressed for programmatic moves so undo/redo don't pollute the history.
+        onNodeMoved = null;
+        // Records the cell a drag started in so we can report the full transition on drag-end.
+        dragStartCell = null;
+        // When true, _moveNode skips firing onNodeMoved (used by undo/redo paths).
+        suppressMoveCallback = false;
         // Crossover connection visualization state
         connections = [];
         connectionLines = null;
@@ -305,6 +312,25 @@ var scadnano;
                     return;
                 }
             }
+        }
+        /**
+         * Move a node identified by helix id to a new (col, row). Used by undo/redo.
+         * Does NOT fire onNodeMoved (that callback is reserved for genuine user drags).
+         */
+        moveNodeById(helixId, toCol, toRow) {
+            for (const [key, record] of this.records.entries()) {
+                if (record.node.id !== helixId)
+                    continue;
+                this.suppressMoveCallback = true;
+                try {
+                    this._moveNode(key, toCol, toRow);
+                }
+                finally {
+                    this.suppressMoveCallback = false;
+                }
+                return true;
+            }
+            return false;
         }
         /** Get the helix ids of all currently selected nodes (primary + multi-selected). */
         getSelectedHelixIds() {
@@ -707,6 +733,10 @@ var scadnano;
                     this.draggingNodeKey = key;
                     this.draggingPointer = { x: e.clientX, y: e.clientY };
                     this.hasDragged = false;
+                    const startRec = this.records.get(key);
+                    this.dragStartCell = startRec
+                        ? { col: cell.col, row: cell.row, id: Number(startRec.node.id) }
+                        : null;
                     e.preventDefault();
                 }
             }
@@ -731,9 +761,12 @@ var scadnano;
         }
         _onMouseUp(_e) {
             const wasDraggingNode = this.draggingNodeKey !== null;
+            const draggedKey = this.draggingNodeKey;
+            const startCell = this.dragStartCell;
             if (this.draggingNodeKey)
                 this.draggingNodeKey = null;
             this.draggingPointer = null;
+            this.dragStartCell = null;
             if (this.isPanning) {
                 this.isPanning = false;
                 // Reset hasDragged on the next tick so click handler can check it first
@@ -741,6 +774,21 @@ var scadnano;
                 return;
             }
             if (wasDraggingNode) {
+                // Emit a move-completed event only if the cell actually changed (skip no-op clicks).
+                if (draggedKey && startCell && !this.suppressMoveCallback) {
+                    const rec = this.records.get(draggedKey);
+                    if (rec) {
+                        const toCol = rec.node.col;
+                        const toRow = rec.node.row;
+                        if (toCol !== startCell.col || toRow !== startCell.row) {
+                            this.onNodeMoved?.({
+                                id: startCell.id,
+                                from: [startCell.col, startCell.row],
+                                to: [toCol, toRow]
+                            });
+                        }
+                    }
+                }
                 // Reset hasDragged on the next tick so click handler can check it first
                 setTimeout(() => { this.hasDragged = false; }, 0);
             }

@@ -1,4 +1,3 @@
-"use strict";
 /// <reference path="../typescript_definitions/index.d.ts" />
 class ScadnanoExportManager {
     currentScadnanoHelices = null;
@@ -7,6 +6,44 @@ class ScadnanoExportManager {
     scadnanoGridEditor = null;
     scadnanoGridEditorType = null;
     suppressNodeSelectedCallback = false;
+    // Edit-history journal. Lives only while the grid pane is open; cleared on export / close /
+    // reload. Holds combine and move operations in the readable JSON form discussed.
+    history = this.createEmptyHistory();
+    createEmptyHistory() {
+        return { entries: {}, order: [], cursor: 0, nextMove: 0, nextCombine: 0 };
+    }
+    clearHistory() {
+        this.history = this.createEmptyHistory();
+        this.refreshHistoryButtons();
+    }
+    // Drop any redo-tail entries before a new operation extends the journal.
+    truncateRedoTail() {
+        if (this.history.cursor >= this.history.order.length)
+            return;
+        const tail = this.history.order.splice(this.history.cursor);
+        tail.forEach(key => { delete this.history.entries[key]; });
+    }
+    pushHistoryEntry(entry) {
+        this.truncateRedoTail();
+        const key = entry.op === 'move'
+            ? `m${++this.history.nextMove}`
+            : `c${++this.history.nextCombine}`;
+        this.history.entries[key] = entry;
+        this.history.order.push(key);
+        this.history.cursor = this.history.order.length;
+        this.refreshHistoryButtons();
+        return key;
+    }
+    canUndo() { return this.history.cursor > 0; }
+    canRedo() { return this.history.cursor < this.history.order.length; }
+    refreshHistoryButtons() {
+        const undoBtn = document.getElementById('scadnanoGridUndoBtn');
+        const redoBtn = document.getElementById('scadnanoGridRedoBtn');
+        if (undoBtn)
+            undoBtn.disabled = !this.canUndo();
+        if (redoBtn)
+            redoBtn.disabled = !this.canRedo();
+    }
     constructor() {
         this.initScadnanoGridPaneControls();
     }
@@ -55,6 +92,28 @@ class ScadnanoExportManager {
             notify('Helix data is not yet available.', 'alert');
             return;
         }
+        // Snapshot the pre-merge state of every helix that's about to be removed. This is what
+        // makes combine reversible: we record nucleotide ids per slot plus the editor cell each
+        // slot occupied. The kept helix doesn't need a snapshot — only its members from the
+        // merged-away helices need to be pulled back out on undo.
+        const sortedIds = [...new Set(ids)].sort((a, b) => a - b);
+        const willRemoveOld = sortedIds.slice(1);
+        const editorNodesBefore = typeof editor.getNodes === 'function'
+            ? editor.getNodes()
+            : [];
+        const cellByOldId = new Map();
+        editorNodesBefore.forEach(n => cellByOldId.set(Number(n.id), [Number(n.col), Number(n.row)]));
+        const removedSnapshots = willRemoveOld.map(oldIdx => {
+            const cell = cellByOldId.get(oldIdx) ?? [0, 0];
+            const slot = helices[oldIdx] || [];
+            return {
+                oldIdx,
+                col: cell[0],
+                row: cell[1],
+                ntIds: slot.map(nt => nt.id)
+            };
+        });
+        const connectionsBefore = this.currentScadnanoConnections.map(([a, b]) => [a, b]);
         const result = helix.combineHelices(helices, ids);
         if (!result) {
             notify('Nothing to combine.', 'warning');
@@ -135,7 +194,244 @@ class ScadnanoExportManager {
         }
         // Refresh the published helix-pos map from the editor (it just lost a few nodes).
         this.publishCurrentHelixPosFromEditor();
+        // Record the combine in the history journal so it's reversible.
+        const entry = {
+            op: 'combine',
+            kept: keptIdx,
+            indices: sortedIds,
+            idRemap: Array.from(idRemap.entries()),
+            removed: removedSnapshots,
+            connections: {
+                before: connectionsBefore,
+                after: this.currentScadnanoConnections.map(([a, b]) => [a, b])
+            }
+        };
+        this.pushHistoryEntry(entry);
         notify(`Combined helix ${mergedIdx.join(', ')} into helix ${keptIdx}.`);
+    }
+    // ── Undo / Redo ─────────────────────────────────────────────────────────
+    undoFromGridView() {
+        if (!this.canUndo())
+            return;
+        const key = this.history.order[this.history.cursor - 1];
+        const entry = this.history.entries[key];
+        if (!entry)
+            return;
+        if (entry.op === 'move')
+            this.applyMoveInverse(entry);
+        else if (entry.op === 'combine')
+            this.applyCombineInverse(entry);
+        this.history.cursor -= 1;
+        this.refreshHistoryButtons();
+    }
+    redoFromGridView() {
+        if (!this.canRedo())
+            return;
+        const key = this.history.order[this.history.cursor];
+        const entry = this.history.entries[key];
+        if (!entry)
+            return;
+        if (entry.op === 'move')
+            this.applyMoveForward(entry);
+        else if (entry.op === 'combine')
+            this.applyCombineForward(entry);
+        this.history.cursor += 1;
+        this.refreshHistoryButtons();
+    }
+    getHistorySnapshot() {
+        // Returned by reference for inspection / debugging. Don't mutate from outside.
+        return this.history;
+    }
+    applyMoveForward(entry) {
+        const editor = this.scadnanoGridEditor;
+        if (!editor || typeof editor.moveNodeById !== 'function')
+            return;
+        editor.moveNodeById(entry.id, entry.to[0], entry.to[1]);
+        this.publishCurrentHelixPosFromEditor();
+        this.syncLayoutHelixPosFromEditor();
+    }
+    applyMoveInverse(entry) {
+        const editor = this.scadnanoGridEditor;
+        if (!editor || typeof editor.moveNodeById !== 'function')
+            return;
+        editor.moveNodeById(entry.id, entry.from[0], entry.from[1]);
+        this.publishCurrentHelixPosFromEditor();
+        this.syncLayoutHelixPosFromEditor();
+    }
+    // Replay a combine forward by re-running combineHelices on its `indices`. Deterministic given
+    // the kept-helix invariant (lowest index wins).
+    applyCombineForward(entry) {
+        const editor = this.scadnanoGridEditor;
+        if (!editor)
+            return;
+        const helices = this.ensureScadnanoHelicesCache();
+        if (!helices)
+            return;
+        const result = helix.combineHelices(helices, entry.indices);
+        if (!result)
+            return;
+        const { keptIdx, idRemap } = result;
+        const removed = new Set(result.mergedIdx);
+        const remapId = (oldId) => {
+            if (removed.has(oldId))
+                return keptIdx;
+            const next = idRemap.get(oldId);
+            return next === undefined ? null : next;
+        };
+        // Renumber editor nodes through the remap, drop merged-away duplicates.
+        const nodes = typeof editor.getNodes === 'function'
+            ? editor.getNodes()
+            : [];
+        const remapped = [];
+        const seenNew = new Set();
+        nodes.forEach(node => {
+            const oldId = Number(node.id);
+            const newId = remapId(oldId);
+            if (newId === null)
+                return;
+            if (seenNew.has(newId))
+                return;
+            seenNew.add(newId);
+            remapped.push({ ...node, id: newId, label: String(newId) });
+        });
+        if (typeof editor.setNodes === 'function')
+            editor.setNodes(remapped);
+        // Apply the recorded post-merge connection list directly (it's already in new-id space).
+        this.currentScadnanoConnections = entry.connections.after.map(([a, b]) => [a, b]);
+        if (typeof editor.setConnections === 'function') {
+            editor.setConnections(this.currentScadnanoConnections);
+        }
+        this.remapCachedGridIds(remapId);
+        this.syncLayoutHelixPosFromEditor();
+        this.publishCurrentHelixPosFromEditor();
+        if (typeof editor.clearSelection === 'function')
+            editor.clearSelection();
+    }
+    // Reverse a combine: re-insert the removed helix slots, pull their nucleotides back out of the
+    // kept helix, then renumber everything in the GridMap and editor through the inverse remap.
+    applyCombineInverse(entry) {
+        const editor = this.scadnanoGridEditor;
+        if (!editor)
+            return;
+        const helices = this.ensureScadnanoHelicesCache();
+        if (!helices)
+            return;
+        // Build inverse remap: newIdx -> oldIdx for survivors.
+        const survivorInverse = new Map();
+        entry.idRemap.forEach(([oldIdx, newIdx]) => survivorInverse.set(newIdx, oldIdx));
+        // The kept helix's *new* index is what we currently see; its *old* index is entry.kept.
+        // Pull the merged-away nucleotides out of the kept helix.
+        const keptOldIdx = entry.kept; // in pre-merge numbering, also same after restoration
+        const keptCurrentIdx = (() => {
+            for (const [newIdx, oldIdx] of survivorInverse.entries()) {
+                if (oldIdx === keptOldIdx)
+                    return newIdx;
+            }
+            return keptOldIdx;
+        })();
+        const keptArr = helices[keptCurrentIdx] || [];
+        // Collect nt ids that need to leave the kept helix (everything that originally belonged
+        // to a merged-away slot).
+        const ntsToExtract = new Set();
+        entry.removed.forEach(slot => slot.ntIds.forEach(id => ntsToExtract.add(id)));
+        // Filter kept down to its original membership (everything not in ntsToExtract stays).
+        const keptKept = [];
+        keptArr.forEach(nt => {
+            if (!ntsToExtract.has(nt.id))
+                keptKept.push(nt);
+        });
+        // Rebuild the helices array at the full pre-merge length. Survivors slot in by their old
+        // indices; the removed slots are repopulated from `entry.removed` by looking up nt
+        // instances in the global elements map.
+        const total = (helices.length) + entry.removed.length; // splice removed N, restore N
+        const rebuilt = new Array(total);
+        // Place survivors back at their old indices.
+        for (let curIdx = 0; curIdx < helices.length; curIdx++) {
+            const oldIdx = survivorInverse.get(curIdx);
+            if (oldIdx === undefined)
+                continue;
+            rebuilt[oldIdx] = curIdx === keptCurrentIdx ? keptKept : helices[curIdx];
+        }
+        // Restore each removed helix from its captured ntIds list.
+        entry.removed.forEach(slot => {
+            const restored = [];
+            slot.ntIds.forEach(id => {
+                const nt = elements.get(id);
+                if (nt instanceof Nucleotide)
+                    restored.push(nt);
+            });
+            rebuilt[slot.oldIdx] = restored;
+        });
+        // Mutate the original helices array in place so existing references stay valid.
+        helices.length = 0;
+        rebuilt.forEach((slot, i) => { helices[i] = slot || []; });
+        // Forward remap (current newIdx -> old oldIdx). Needed for fixing up the cached GridMap
+        // and the editor's existing nodes — both currently key off the post-merge numbering.
+        const inverseRemap = (currentId) => {
+            const oldIdx = survivorInverse.get(currentId);
+            return oldIdx !== undefined ? oldIdx : currentId;
+        };
+        // Restore GridMap helixIds: nucleotides in the kept helix that originally belonged to a
+        // removed slot need their helixId set back to that slot's oldIdx.
+        const ntToOldHelix = new Map();
+        entry.removed.forEach(slot => slot.ntIds.forEach(id => ntToOldHelix.set(id, slot.oldIdx)));
+        if (this.currentScadnanoLayout) {
+            this.currentScadnanoLayout.grid.forEach((mark, ntId) => {
+                const overriden = ntToOldHelix.get(ntId);
+                if (overriden !== undefined) {
+                    mark.helixId = overriden;
+                }
+                else {
+                    mark.helixId = inverseRemap(mark.helixId);
+                }
+            });
+        }
+        // Renumber the editor's existing node ids via the inverse remap, then add the restored
+        // nodes back at their captured cells.
+        const currentNodes = typeof editor.getNodes === 'function'
+            ? editor.getNodes()
+            : [];
+        const restoredNodes = [];
+        currentNodes.forEach(node => {
+            const oldId = inverseRemap(Number(node.id));
+            restoredNodes.push({ ...node, id: oldId, label: String(oldId) });
+        });
+        entry.removed.forEach(slot => {
+            restoredNodes.push({ id: slot.oldIdx, col: slot.col, row: slot.row, label: String(slot.oldIdx) });
+        });
+        if (typeof editor.setNodes === 'function')
+            editor.setNodes(restoredNodes);
+        // Restore the pre-merge connection list verbatim.
+        this.currentScadnanoConnections = entry.connections.before.map(([a, b]) => [a, b]);
+        if (typeof editor.setConnections === 'function') {
+            editor.setConnections(this.currentScadnanoConnections);
+        }
+        this.syncLayoutHelixPosFromEditor();
+        this.publishCurrentHelixPosFromEditor();
+        if (typeof editor.clearSelection === 'function')
+            editor.clearSelection();
+    }
+    remapCachedGridIds(remap) {
+        if (!this.currentScadnanoLayout)
+            return;
+        this.currentScadnanoLayout.grid.forEach(mark => {
+            const newId = remap(mark.helixId);
+            if (newId === null)
+                return;
+            mark.helixId = newId;
+        });
+    }
+    syncLayoutHelixPosFromEditor() {
+        if (!this.currentScadnanoLayout)
+            return;
+        const editor = this.scadnanoGridEditor;
+        if (!editor || typeof editor.getNodes !== 'function')
+            return;
+        const refreshed = new Map();
+        editor.getNodes().forEach(node => {
+            refreshed.set(Number(node.id), [Number(node.col), Number(node.row)]);
+        });
+        this.currentScadnanoLayout.helixPos = refreshed;
     }
     showGridFromHelixPos(helixPosInput, gridTypeInput) {
         const pane = this.getScadnanoGridPane();
@@ -164,9 +460,12 @@ class ScadnanoExportManager {
             editor.setConnections(this.currentScadnanoConnections);
         }
         this.publishCurrentHelixPosFromEditor();
+        // Fresh grid view = fresh history.
+        this.clearHistory();
     }
     hideScadnanoGridPane() {
         document.body.classList.remove('scadnano-grid-open');
+        this.clearHistory();
     }
     toggleGridDropdown(checkboxElement) {
         const gridDropdown = document.getElementById('scadnanoGrid');
@@ -543,6 +842,30 @@ class ScadnanoExportManager {
                 return;
             this.selectHelixFromGridNode(helixId);
         };
+        // Genuine user-initiated drags push a move entry onto the history journal.
+        // Programmatic moves (undo/redo) suppress this callback inside the editor.
+        this.scadnanoGridEditor.onNodeMoved = (info) => {
+            const id = Number(info?.id);
+            if (!Number.isFinite(id))
+                return;
+            const fromCol = Number(info.from?.[0]);
+            const fromRow = Number(info.from?.[1]);
+            const toCol = Number(info.to?.[0]);
+            const toRow = Number(info.to?.[1]);
+            if (!Number.isFinite(fromCol) || !Number.isFinite(fromRow))
+                return;
+            if (!Number.isFinite(toCol) || !Number.isFinite(toRow))
+                return;
+            if (fromCol === toCol && fromRow === toRow)
+                return;
+            this.pushHistoryEntry({
+                op: 'move',
+                id,
+                from: [fromCol, fromRow],
+                to: [toCol, toRow]
+            });
+            this.syncLayoutHelixPosFromEditor();
+        };
         return this.scadnanoGridEditor;
     }
     initScadnanoGridPaneControls() {
@@ -557,6 +880,8 @@ class ScadnanoExportManager {
             exportBtn.addEventListener('click', () => {
                 this.publishCurrentHelixPosFromEditor();
                 this.exportFromGridView(window.currentScadnanoHelixPos);
+                // Drop the history cache after a successful export, per spec.
+                this.clearHistory();
             });
         }
         const combineBtn = document.getElementById('scadnanoGridCombineBtn');
@@ -565,6 +890,44 @@ class ScadnanoExportManager {
                 this.combineSelectedHelicesFromGridView();
             });
         }
+        const undoBtn = document.getElementById('scadnanoGridUndoBtn');
+        if (undoBtn) {
+            undoBtn.addEventListener('click', () => {
+                this.undoFromGridView();
+            });
+        }
+        const redoBtn = document.getElementById('scadnanoGridRedoBtn');
+        if (redoBtn) {
+            redoBtn.addEventListener('click', () => {
+                this.redoFromGridView();
+            });
+        }
+        // Cmd/Ctrl+Z and Cmd/Ctrl+Shift+Z are scoped to the gridview canvas so they don't
+        // conflict with the global editHistory bindings on the 3D scene canvas.
+        const gridCanvas = this.getScadnanoGridCanvas();
+        if (gridCanvas) {
+            // Make the canvas focusable so it can receive keydown events.
+            if (!gridCanvas.hasAttribute('tabindex')) {
+                gridCanvas.setAttribute('tabindex', '0');
+            }
+            gridCanvas.addEventListener('keydown', (e) => {
+                const cmd = e.ctrlKey || e.metaKey;
+                if (!cmd)
+                    return;
+                if (e.key.toLowerCase() === 'z') {
+                    e.preventDefault();
+                    if (e.shiftKey)
+                        this.redoFromGridView();
+                    else
+                        this.undoFromGridView();
+                }
+                else if (e.key.toLowerCase() === 'y') {
+                    e.preventDefault();
+                    this.redoFromGridView();
+                }
+            });
+        }
+        this.refreshHistoryButtons();
         const resizeHandle = document.getElementById('scadnanoGridResizeHandle');
         let resizing = false;
         if (resizeHandle) {
@@ -618,6 +981,9 @@ function registerScadnanoWindowApi() {
         scadnanoManager.selectHelixFromNucleotide(nucleotideInput);
     };
     window.scadnanoGetHelices = () => scadnanoManager.getHelices();
+    window.scadnanoGridUndo = () => scadnanoManager.undoFromGridView();
+    window.scadnanoGridRedo = () => scadnanoManager.redoFromGridView();
+    window.scadnanoGridGetHistory = () => scadnanoManager.getHistorySnapshot();
 }
 registerScadnanoWindowApi();
 // Keep these named wrappers for inline HTML handlers and backwards compatibility.

@@ -40,7 +40,7 @@ body {
   top: 0;
   left: 0;
   width: 100%;
-  height: calc(100% - 84px);
+  height: calc(100% - 120px);
   z-index: 1;
 }
 
@@ -67,10 +67,10 @@ body {
 
 #scadnanoGridMissingBtn,
 #scadnanoGridExportBtn,
-#scadnanoGridCombineBtn {
+#scadnanoGridCombineBtn,
+#scadnanoGridUndoBtn,
+#scadnanoGridRedoBtn {
   position: absolute;
-  left: 12px;
-  right: 12px;
   height: 32px;
   border: 1px solid #b7b7b7;
   background: #ffffff;
@@ -78,6 +78,13 @@ body {
   font-size: 13px;
   cursor: pointer;
   z-index: 4;
+}
+
+#scadnanoGridMissingBtn,
+#scadnanoGridExportBtn,
+#scadnanoGridCombineBtn {
+  left: 12px;
+  right: 12px;
 }
 
 #scadnanoGridMissingBtn {
@@ -92,9 +99,31 @@ body {
   bottom: 44px;
 }
 
+/* Undo / Redo share a row above Combine. */
+#scadnanoGridUndoBtn {
+  bottom: 80px;
+  left: 12px;
+  width: calc(50% - 18px);
+}
+
+#scadnanoGridRedoBtn {
+  bottom: 80px;
+  right: 12px;
+  width: calc(50% - 18px);
+}
+
+#scadnanoGridUndoBtn:disabled,
+#scadnanoGridRedoBtn:disabled {
+  color: #9a9a9a;
+  background: #f4f4f4;
+  cursor: not-allowed;
+}
+
 #scadnanoGridMissingBtn:hover,
 #scadnanoGridExportBtn:hover,
-#scadnanoGridCombineBtn:hover {
+#scadnanoGridCombineBtn:hover,
+#scadnanoGridUndoBtn:not(:disabled):hover,
+#scadnanoGridRedoBtn:not(:disabled):hover {
   background: #f4f4f4;
 }
 
