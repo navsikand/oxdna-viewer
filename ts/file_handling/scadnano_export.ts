@@ -187,6 +187,11 @@ class ScadnanoExportManager {
             return;
         }
 
+        if (!this.currentScadnanoLayout) {
+            notify('Helix layout is not yet available.', 'alert');
+            return;
+        }
+
         // Snapshot the pre-merge state of every helix that's about to be removed. This is what
         // makes combine reversible: we record nucleotide ids per slot plus the editor cell each
         // slot occupied. The kept helix doesn't need a snapshot — only its members from the
@@ -211,88 +216,17 @@ class ScadnanoExportManager {
         });
         const connectionsBefore = this.currentScadnanoConnections.map(([a, b]) => [a, b] as [number, number]);
 
-        const result = helix.combineHelices(helices, ids);
+        // combineHelices mutates `helices` AND `currentScadnanoLayout.grid` in place.
+        const result = helix.combineHelices(helices, ids, this.currentScadnanoLayout.grid);
         if (!result) {
             notify('Nothing to combine.', 'warning');
             return;
         }
 
         const { keptIdx, mergedIdx, idRemap } = result;
-        const removed = new Set<number>(mergedIdx);
 
-        // Walk a snapshot of editor nodes; remove merged-away entries and renumber the survivors
-        // (combineHelices spliced out the empty slots, so downstream indices shifted).
-        const remapId = (oldId: number): number | null => {
-            if (removed.has(oldId)) return keptIdx;
-            const next = idRemap.get(oldId);
-            return next === undefined ? null : next;
-        };
-
-        if (typeof editor.getNodes === 'function') {
-            const nodes = editor.getNodes() as Array<{ id: number; col: number; row: number; label?: string; color?: number }>;
-            // Rebuild the editor's nodes from the snapshot using the remapped ids — this preserves
-            // the user's col/row layout while collapsing duplicates and dropping merged-away nodes.
-            const remapped: Array<{ id: number; col: number; row: number; label?: string; color?: number }> = [];
-            const seenNew = new Set<number>();
-            nodes.forEach(node => {
-                const oldId = Number(node.id);
-                const newId = remapId(oldId);
-                if (newId === null) return;
-                if (seenNew.has(newId)) return; // skip duplicates (e.g. merged-away nodes mapping to keptIdx)
-                seenNew.add(newId);
-                remapped.push({ ...node, id: newId, label: String(newId) });
-            });
-            if (typeof editor.setNodes === 'function') {
-                editor.setNodes(remapped);
-            }
-        }
-
-        // Remap crossover connections through the same lookup. Drop self-loops (now-internal
-        // connections) and dedupe.
-        const remappedConnKeys = new Set<string>();
-        const updatedConnections: Array<[number, number]> = [];
-        this.currentScadnanoConnections.forEach(([from, to]) => {
-            const a = remapId(from);
-            const b = remapId(to);
-            if (a === null || b === null) return;
-            if (a === b) return;
-            const key = a < b ? `${a}:${b}` : `${b}:${a}`;
-            if (remappedConnKeys.has(key)) return;
-            remappedConnKeys.add(key);
-            updatedConnections.push([a, b]);
-        });
-        this.currentScadnanoConnections = updatedConnections;
-
-        if (typeof editor.setConnections === 'function') {
-            editor.setConnections(this.currentScadnanoConnections);
-        }
-
-        if (this.currentScadnanoLayout) {
-            // Remap helixIds inside the cached GridMap. Every nucleotide in a merged-away helix
-            // now reports keptIdx; every survivor's id shifts down through idRemap.
-            this.currentScadnanoLayout.grid.forEach(mark => {
-                const newId = remapId(mark.helixId);
-                if (newId === null) return;
-                mark.helixId = newId;
-            });
-
-            // Refresh helixPos from the editor — its node set already reflects the merge.
-            const refreshed = new Map<number, [number, number]>();
-            const nodes = typeof editor.getNodes === 'function'
-                ? editor.getNodes() as Array<{ id: number; col: number; row: number }>
-                : [];
-            nodes.forEach(node => {
-                refreshed.set(Number(node.id), [Number(node.col), Number(node.row)]);
-            });
-            this.currentScadnanoLayout.helixPos = refreshed;
-        }
-
-        if (typeof editor.clearSelection === 'function') {
-            editor.clearSelection();
-        }
-
-        // Refresh the published helix-pos map from the editor (it just lost a few nodes).
-        this.publishCurrentHelixPosFromEditor();
+        // Cascade the merge through the editor (nodes + connections), helixPos, and selection.
+        this.applyCombineCascade(result);
 
         // Record the combine in the history journal so it's reversible.
         const entry: ScadnanoCombineEntry = {
@@ -318,8 +252,8 @@ class ScadnanoExportManager {
         const entry = this.history.entries[key];
         if (!entry) return;
 
-        if (entry.op === 'move')    this.applyMoveInverse(entry);
-        else if (entry.op === 'combine') this.applyCombineInverse(entry);
+        if (entry.op === 'move')    this.undoMove(entry);
+        else if (entry.op === 'combine') this.undoCombine(entry);
 
         this.history.cursor -= 1;
         this.refreshHistoryButtons();
@@ -331,8 +265,8 @@ class ScadnanoExportManager {
         const entry = this.history.entries[key];
         if (!entry) return;
 
-        if (entry.op === 'move')    this.applyMoveForward(entry);
-        else if (entry.op === 'combine') this.applyCombineForward(entry);
+        if (entry.op === 'move')    this.redoMove(entry);
+        else if (entry.op === 'combine') this.redoCombine(entry);
 
         this.history.cursor += 1;
         this.refreshHistoryButtons();
@@ -343,7 +277,7 @@ class ScadnanoExportManager {
         return this.history;
     }
 
-    private applyMoveForward(entry: ScadnanoMoveEntry): void {
+    private redoMove(entry: ScadnanoMoveEntry): void {
         const editor = this.scadnanoGridEditor;
         if (!editor || typeof editor.moveNodeById !== 'function') return;
         editor.moveNodeById(entry.id, entry.to[0], entry.to[1]);
@@ -351,7 +285,7 @@ class ScadnanoExportManager {
         this.syncLayoutHelixPosFromEditor();
     }
 
-    private applyMoveInverse(entry: ScadnanoMoveEntry): void {
+    private undoMove(entry: ScadnanoMoveEntry): void {
         const editor = this.scadnanoGridEditor;
         if (!editor || typeof editor.moveNodeById !== 'function') return;
         editor.moveNodeById(entry.id, entry.from[0], entry.from[1]);
@@ -359,55 +293,26 @@ class ScadnanoExportManager {
         this.syncLayoutHelixPosFromEditor();
     }
 
-    // Replay a combine forward by re-running combineHelices on its `indices`. Deterministic given
-    // the kept-helix invariant (lowest index wins).
-    private applyCombineForward(entry: ScadnanoCombineEntry): void {
+    // Replay a combine forward by re-running combineHelices on the saved indices, then handing
+    // off to the same cascade helper the live combine path uses. The only difference is that
+    // redo applies the cached post-merge connection list directly (passed via override), instead
+    // of re-deriving it through the remap.
+    private redoCombine(entry: ScadnanoCombineEntry): void {
         const editor = this.scadnanoGridEditor;
         if (!editor) return;
         const helices = this.ensureScadnanoHelicesCache();
         if (!helices) return;
+        if (!this.currentScadnanoLayout) return;
 
-        const result = helix.combineHelices(helices, entry.indices);
+        const result = helix.combineHelices(helices, entry.indices, this.currentScadnanoLayout.grid);
         if (!result) return;
-        const { keptIdx, idRemap } = result;
-        const removed = new Set<number>(result.mergedIdx);
-        const remapId = (oldId: number): number | null => {
-            if (removed.has(oldId)) return keptIdx;
-            const next = idRemap.get(oldId);
-            return next === undefined ? null : next;
-        };
 
-        // Renumber editor nodes through the remap, drop merged-away duplicates.
-        const nodes = typeof editor.getNodes === 'function'
-            ? editor.getNodes() as Array<{ id: number; col: number; row: number; label?: string; color?: number }>
-            : [];
-        const remapped: Array<{ id: number; col: number; row: number; label?: string; color?: number }> = [];
-        const seenNew = new Set<number>();
-        nodes.forEach(node => {
-            const oldId = Number(node.id);
-            const newId = remapId(oldId);
-            if (newId === null) return;
-            if (seenNew.has(newId)) return;
-            seenNew.add(newId);
-            remapped.push({ ...node, id: newId, label: String(newId) });
-        });
-        if (typeof editor.setNodes === 'function') editor.setNodes(remapped);
-
-        // Apply the recorded post-merge connection list directly (it's already in new-id space).
-        this.currentScadnanoConnections = entry.connections.after.map(([a, b]) => [a, b] as [number, number]);
-        if (typeof editor.setConnections === 'function') {
-            editor.setConnections(this.currentScadnanoConnections);
-        }
-
-        this.remapCachedGridIds(remapId);
-        this.syncLayoutHelixPosFromEditor();
-        this.publishCurrentHelixPosFromEditor();
-        if (typeof editor.clearSelection === 'function') editor.clearSelection();
+        this.applyCombineCascade(result, entry.connections.after);
     }
 
     // Reverse a combine: re-insert the removed helix slots, pull their nucleotides back out of the
     // kept helix, then renumber everything in the GridMap and editor through the inverse remap.
-    private applyCombineInverse(entry: ScadnanoCombineEntry): void {
+    private undoCombine(entry: ScadnanoCombineEntry): void {
         const editor = this.scadnanoGridEditor;
         if (!editor) return;
         const helices = this.ensureScadnanoHelicesCache();
@@ -521,6 +426,78 @@ class ScadnanoExportManager {
             if (newId === null) return;
             mark.helixId = newId;
         });
+    }
+
+    // Run after combineHelices has already mutated the helices array AND the cached grid in place.
+    // Cascades the merge through the visual editor (nodes + connections), the cached helixPos,
+    // selection state, and the published helix-pos map. Single entry point so a debugger breakpoint
+    // here covers every downstream side effect of a combine.
+    //
+    // `connectionsOverride` is for redo: live combines remap the current connection list through
+    // `remapId`, but redo already has the post-merge connection list cached on the journal entry
+    // (`entry.connections.after`), so it passes that in directly to skip the remap.
+    private applyCombineCascade(
+        result: { keptIdx: number; mergedIdx: number[]; idRemap: Map<number, number> },
+        connectionsOverride?: Array<[number, number]>
+    ): void {
+        const editor = this.scadnanoGridEditor;
+        if (!editor) return;
+
+        const { keptIdx, mergedIdx, idRemap } = result;
+        const removed = new Set<number>(mergedIdx);
+        const remapId = (oldId: number): number | null => {
+            if (removed.has(oldId)) return keptIdx;
+            const next = idRemap.get(oldId);
+            return next === undefined ? null : next;
+        };
+
+        // Renumber editor nodes through the remap, drop merged-away duplicates. Survivors keep
+        // their col/row — the kept helix stays in its original cell.
+        if (typeof editor.getNodes === 'function') {
+            const nodes = editor.getNodes() as Array<{ id: number; col: number; row: number; label?: string; color?: number }>;
+            const remapped: Array<{ id: number; col: number; row: number; label?: string; color?: number }> = [];
+            const seenNew = new Set<number>();
+            nodes.forEach(node => {
+                const oldId = Number(node.id);
+                const newId = remapId(oldId);
+                if (newId === null) return;
+                if (seenNew.has(newId)) return; // skip duplicates (e.g. merged-away nodes mapping to keptIdx)
+                seenNew.add(newId);
+                remapped.push({ ...node, id: newId, label: String(newId) });
+            });
+            if (typeof editor.setNodes === 'function') editor.setNodes(remapped);
+        }
+
+        // Connections: redo applies the cached post-merge list verbatim; live combines remap the
+        // current list (drop self-loops + dedup).
+        if (connectionsOverride) {
+            this.currentScadnanoConnections = connectionsOverride.map(([a, b]) => [a, b] as [number, number]);
+        } else {
+            const remappedConnKeys = new Set<string>();
+            const updatedConnections: Array<[number, number]> = [];
+            this.currentScadnanoConnections.forEach(([from, to]) => {
+                const a = remapId(from);
+                const b = remapId(to);
+                if (a === null || b === null) return;
+                if (a === b) return;
+                const key = a < b ? `${a}:${b}` : `${b}:${a}`;
+                if (remappedConnKeys.has(key)) return;
+                remappedConnKeys.add(key);
+                updatedConnections.push([a, b]);
+            });
+            this.currentScadnanoConnections = updatedConnections;
+        }
+        if (typeof editor.setConnections === 'function') {
+            editor.setConnections(this.currentScadnanoConnections);
+        }
+
+        // helixPos is rebuilt from the (now post-merge) editor node set.
+        this.syncLayoutHelixPosFromEditor();
+
+        if (typeof editor.clearSelection === 'function') editor.clearSelection();
+
+        // Refresh the published helix-pos map from the editor (it just lost a few nodes).
+        this.publishCurrentHelixPosFromEditor();
     }
 
     private syncLayoutHelixPosFromEditor(): void {

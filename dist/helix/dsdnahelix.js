@@ -1,3 +1,4 @@
+"use strict";
 /// <reference path="../typescript_definitions/index.d.ts" />
 /// <reference path="../typescript_definitions/oxView.d.ts" />
 /// <reference path="../main.ts" />
@@ -1227,12 +1228,14 @@ var helix;
     helix_1.findHelices = findHelices;
     // Merge two or more helices into the one with the lowest index.
     // Mutates `helices` in place: pushes nucleotides from higher-indexed entries into the kept helix
-    // and SPLICES those entries out, so the array shrinks. Returns an `idRemap` (oldIdx -> newIdx)
-    // that callers must use to fix any external references that key off helix index — gridview node
-    // ids, crossover connection ids, cached GridMap helixIds, etc.
-    // No checks for grid layout or overlap — that is the caller's responsibility.
-    function combineHelices(helices, indices) {
-        if (!Array.isArray(helices) || !Array.isArray(indices))
+    // and SPLICES those entries out, so the array shrinks. Also mutates `grid` in place: every
+    // GridMark whose helixId points at a merged-away helix is rewritten to the kept id, and every
+    // surviving helixId is shifted down through the same remap that's returned. Returns an
+    // `idRemap` (oldIdx -> newIdx) that callers still need for any external references that key
+    // off helix index — gridview node ids, crossover connection ids, etc.
+    // No checks for grid layout or per-(helix,offset) overlap — that is the caller's responsibility.
+    function combineHelices(helices, indices, grid) {
+        if (!Array.isArray(helices) || !Array.isArray(indices) || !(grid instanceof Map))
             return null;
         const valid = [];
         const seenIdx = new Set();
@@ -1277,6 +1280,19 @@ var helix;
             }
             idRemap.set(i, i - shift);
         }
+        // Apply the same remap to the grid so per-nucleotide helixIds stay consistent with the
+        // helices array. Marks pointing at a merged-away helix collapse onto the kept id; marks
+        // on survivors shift down through idRemap. keptIdxOld is the lowest valid index, so its
+        // new id equals its old id — using it directly here is safe.
+        grid.forEach(mark => {
+            if (removed.has(mark.helixId)) {
+                mark.helixId = keptIdxOld;
+                return;
+            }
+            const next = idRemap.get(mark.helixId);
+            if (next !== undefined)
+                mark.helixId = next;
+        });
         // Splice in reverse so earlier indices stay valid during removal.
         for (let i = helices.length - 1; i >= 0; i--) {
             if (removed.has(i))
