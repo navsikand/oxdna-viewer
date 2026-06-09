@@ -1410,4 +1410,88 @@ namespace helix {
 		return { keptIdx, mergedIdx: mergedIdxOld, idRemap };
 	}
 
+	// Minimal snapshot shape splitHelices needs. ScadnanoCombineEntry is structurally compatible
+	// (it has all these fields plus more), so callers can pass their journal entry directly.
+	export type CombineSnapshot = {
+		kept: number;                                        // pre-merge index of the kept helix
+		idRemap: Array<[number, number]>;                    // [oldIdx, newIdx] for survivors
+		removed: Array<{ oldIdx: number; ntIds: number[] }>; // one per merged-away helix
+	};
+
+	// Reverse a combineHelices call using a snapshot recorded at merge time.
+	// Mutates `helices` in place: rebuilds at full pre-merge length, places each survivor back at
+	// its old index, and repopulates each removed slot from its captured `ntIds`. Mutates `grid`
+	// in place: marks for nucleotides in any removed slot get their original `helixId` back;
+	// every other mark shifts up through the inverse remap.
+	// Returns an `inverseRemap(currentId) -> oldId` helper so callers can fix up external state
+	// (gridview node ids, connection endpoints) that's still keyed in post-merge numbering.
+	export function splitHelices(
+		helices: Nucleotide[][],
+		grid: toscad.GridMap,
+		snapshot: CombineSnapshot
+	): { inverseRemap: (currentId: number) => number } | null {
+		if (!Array.isArray(helices) || !(grid instanceof Map) || !snapshot) return null;
+		if (!Array.isArray(snapshot.idRemap) || !Array.isArray(snapshot.removed)) return null;
+
+		// Inverse remap: post-merge (current) index -> pre-merge (old) index. Only survivors are
+		// in this map; ids outside it are passed through unchanged.
+		const survivorInverse = new Map<number, number>();
+		snapshot.idRemap.forEach(([oldIdx, newIdx]) => survivorInverse.set(newIdx, oldIdx));
+		const inverseRemap = (currentId: number): number => {
+			const oldIdx = survivorInverse.get(currentId);
+			return oldIdx !== undefined ? oldIdx : currentId;
+		};
+
+		// Locate the kept helix in its current (post-merge) position.
+		const keptOldIdx = snapshot.kept;
+		let keptCurrentIdx = keptOldIdx;
+		for (const [newIdx, oldIdx] of survivorInverse.entries()) {
+			if (oldIdx === keptOldIdx) { keptCurrentIdx = newIdx; break; }
+		}
+
+		// Pull merged-away nucleotides out of the kept helix.
+		const ntsToExtract = new Set<number>();
+		snapshot.removed.forEach(slot => slot.ntIds.forEach(id => ntsToExtract.add(id)));
+		const keptArr = helices[keptCurrentIdx] || [];
+		const keptKept: Nucleotide[] = [];
+		keptArr.forEach(nt => { if (!ntsToExtract.has(nt.id)) keptKept.push(nt); });
+
+		// Rebuild helices at full pre-merge length: survivors back at their old indices, removed
+		// slots repopulated by looking up nucleotides in the global elements map.
+		const total = helices.length + snapshot.removed.length;
+		const rebuilt: Nucleotide[][] = new Array(total);
+		for (let curIdx = 0; curIdx < helices.length; curIdx++) {
+			const oldIdx = survivorInverse.get(curIdx);
+			if (oldIdx === undefined) continue;
+			rebuilt[oldIdx] = curIdx === keptCurrentIdx ? keptKept : helices[curIdx];
+		}
+		snapshot.removed.forEach(slot => {
+			const restored: Nucleotide[] = [];
+			slot.ntIds.forEach(id => {
+				const nt = elements.get(id);
+				if (nt instanceof Nucleotide) restored.push(nt);
+			});
+			rebuilt[slot.oldIdx] = restored;
+		});
+
+		// Mutate the original array in place so existing references stay valid.
+		helices.length = 0;
+		rebuilt.forEach((slot, i) => { helices[i] = slot || []; });
+
+		// Restore GridMap helixIds. A nucleotide that was in a removed slot snaps back to that
+		// slot's oldIdx; every other mark goes through the inverse remap.
+		const ntToOldHelix = new Map<number, number>();
+		snapshot.removed.forEach(slot => slot.ntIds.forEach(id => ntToOldHelix.set(id, slot.oldIdx)));
+		grid.forEach((mark, ntId) => {
+			const overriden = ntToOldHelix.get(ntId);
+			if (overriden !== undefined) {
+				mark.helixId = overriden;
+			} else {
+				mark.helixId = inverseRemap(mark.helixId);
+			}
+		});
+
+		return { inverseRemap };
+	}
+
 }

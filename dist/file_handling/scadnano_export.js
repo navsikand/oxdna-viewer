@@ -219,100 +219,15 @@ class ScadnanoExportManager {
         const helices = this.ensureScadnanoHelicesCache();
         if (!helices)
             return;
-        // Build inverse remap: newIdx -> oldIdx for survivors.
-        const survivorInverse = new Map();
-        entry.idRemap.forEach(([oldIdx, newIdx]) => survivorInverse.set(newIdx, oldIdx));
-        // The kept helix's *new* index is what we currently see; its *old* index is entry.kept.
-        // Pull the merged-away nucleotides out of the kept helix.
-        const keptOldIdx = entry.kept; // in pre-merge numbering, also same after restoration
-        const keptCurrentIdx = (() => {
-            for (const [newIdx, oldIdx] of survivorInverse.entries()) {
-                if (oldIdx === keptOldIdx)
-                    return newIdx;
-            }
-            return keptOldIdx;
-        })();
-        const keptArr = helices[keptCurrentIdx] || [];
-        // Collect nt ids that need to leave the kept helix (everything that originally belonged
-        // to a merged-away slot).
-        const ntsToExtract = new Set();
-        entry.removed.forEach(slot => slot.ntIds.forEach(id => ntsToExtract.add(id)));
-        // Filter kept down to its original membership (everything not in ntsToExtract stays).
-        const keptKept = [];
-        keptArr.forEach(nt => {
-            if (!ntsToExtract.has(nt.id))
-                keptKept.push(nt);
-        });
-        // Rebuild the helices array at the full pre-merge length. Survivors slot in by their old
-        // indices; the removed slots are repopulated from `entry.removed` by looking up nt
-        // instances in the global elements map.
-        const total = (helices.length) + entry.removed.length; // splice removed N, restore N
-        const rebuilt = new Array(total);
-        // Place survivors back at their old indices.
-        for (let curIdx = 0; curIdx < helices.length; curIdx++) {
-            const oldIdx = survivorInverse.get(curIdx);
-            if (oldIdx === undefined)
-                continue;
-            rebuilt[oldIdx] = curIdx === keptCurrentIdx ? keptKept : helices[curIdx];
-        }
-        // Restore each removed helix from its captured ntIds list.
-        entry.removed.forEach(slot => {
-            const restored = [];
-            slot.ntIds.forEach(id => {
-                const nt = elements.get(id);
-                if (nt instanceof Nucleotide)
-                    restored.push(nt);
-            });
-            rebuilt[slot.oldIdx] = restored;
-        });
-        // Mutate the original helices array in place so existing references stay valid.
-        helices.length = 0;
-        rebuilt.forEach((slot, i) => { helices[i] = slot || []; });
-        // Forward remap (current newIdx -> old oldIdx). Needed for fixing up the cached GridMap
-        // and the editor's existing nodes — both currently key off the post-merge numbering.
-        const inverseRemap = (currentId) => {
-            const oldIdx = survivorInverse.get(currentId);
-            return oldIdx !== undefined ? oldIdx : currentId;
-        };
-        // Restore GridMap helixIds: nucleotides in the kept helix that originally belonged to a
-        // removed slot need their helixId set back to that slot's oldIdx.
-        const ntToOldHelix = new Map();
-        entry.removed.forEach(slot => slot.ntIds.forEach(id => ntToOldHelix.set(id, slot.oldIdx)));
-        if (this.currentScadnanoLayout) {
-            this.currentScadnanoLayout.grid.forEach((mark, ntId) => {
-                const overriden = ntToOldHelix.get(ntId);
-                if (overriden !== undefined) {
-                    mark.helixId = overriden;
-                }
-                else {
-                    mark.helixId = inverseRemap(mark.helixId);
-                }
-            });
-        }
-        // Renumber the editor's existing node ids via the inverse remap, then add the restored
-        // nodes back at their captured cells.
-        const currentNodes = typeof editor.getNodes === 'function'
-            ? editor.getNodes()
-            : [];
-        const restoredNodes = [];
-        currentNodes.forEach(node => {
-            const oldId = inverseRemap(Number(node.id));
-            restoredNodes.push({ ...node, id: oldId, label: String(oldId) });
-        });
-        entry.removed.forEach(slot => {
-            restoredNodes.push({ id: slot.oldIdx, col: slot.col, row: slot.row, label: String(slot.oldIdx) });
-        });
-        if (typeof editor.setNodes === 'function')
-            editor.setNodes(restoredNodes);
-        // Restore the pre-merge connection list verbatim.
-        this.currentScadnanoConnections = entry.connections.before.map(([a, b]) => [a, b]);
-        if (typeof editor.setConnections === 'function') {
-            editor.setConnections(this.currentScadnanoConnections);
-        }
-        this.syncLayoutHelixPosFromEditor();
-        this.publishCurrentHelixPosFromEditor();
-        if (typeof editor.clearSelection === 'function')
-            editor.clearSelection();
+        if (!this.currentScadnanoLayout)
+            return;
+        // splitHelices mutates `helices` AND `currentScadnanoLayout.grid` in place, mirroring
+        // what combineHelices did on the forward path. It hands back the inverse remap the
+        // cascade needs to renumber editor nodes that are still in post-merge id space.
+        const result = helix.splitHelices(helices, this.currentScadnanoLayout.grid, entry);
+        if (!result)
+            return;
+        this.applyCombineCascadeInverse(entry, result.inverseRemap);
     }
     remapCachedGridIds(remap) {
         if (!this.currentScadnanoLayout)
@@ -395,6 +310,39 @@ class ScadnanoExportManager {
             editor.clearSelection();
         // Refresh the published helix-pos map from the editor (it just lost a few nodes).
         this.publishCurrentHelixPosFromEditor();
+    }
+    // Inverse of applyCombineCascade. Run after splitHelices has already restored helices + grid
+    // back to their pre-merge state. Renumbers existing editor nodes through the inverse remap,
+    // re-adds the removed nodes at their saved cells, and restores the pre-merge connection list
+    // from the journal entry.
+    applyCombineCascadeInverse(entry, inverseRemap) {
+        const editor = this.scadnanoGridEditor;
+        if (!editor)
+            return;
+        // Renumber existing editor nodes (still in post-merge id space) back to old ids, then
+        // re-insert the removed nodes at their captured cells.
+        const currentNodes = typeof editor.getNodes === 'function'
+            ? editor.getNodes()
+            : [];
+        const restoredNodes = [];
+        currentNodes.forEach(node => {
+            const oldId = inverseRemap(Number(node.id));
+            restoredNodes.push({ ...node, id: oldId, label: String(oldId) });
+        });
+        entry.removed.forEach(slot => {
+            restoredNodes.push({ id: slot.oldIdx, col: slot.col, row: slot.row, label: String(slot.oldIdx) });
+        });
+        if (typeof editor.setNodes === 'function')
+            editor.setNodes(restoredNodes);
+        // Restore the pre-merge connection list verbatim.
+        this.currentScadnanoConnections = entry.connections.before.map(([a, b]) => [a, b]);
+        if (typeof editor.setConnections === 'function') {
+            editor.setConnections(this.currentScadnanoConnections);
+        }
+        this.syncLayoutHelixPosFromEditor();
+        this.publishCurrentHelixPosFromEditor();
+        if (typeof editor.clearSelection === 'function')
+            editor.clearSelection();
     }
     syncLayoutHelixPosFromEditor() {
         if (!this.currentScadnanoLayout)
