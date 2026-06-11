@@ -1309,11 +1309,6 @@ namespace helix {
 		// const finalHelices = helices.filter(h => h.length > 0);
 		return { helices, lastScraps, binders, binder2, disconnected, unhandled };
 	}
-	// export function generateTotal(inputMap: Map<number, Nucleotide>, tolerance = 2) {
-	// 	let {partials, unpaired} = findHelixPartials(inputMap, tolerance);
-	// 	let {ssdna, stubs, longssScaffold} = ssdnaPartials(unpaired);
-	// 	let ssScaffold = longssScaffoldfunc(longssScaffold);
-	// }
 
 	export function findHelices(inputMap: Map<number, Nucleotide>, tolerance = 2) {
 		findBasepairsOptim2();
@@ -1335,7 +1330,7 @@ namespace helix {
 	// surviving helixId is shifted down through the same remap that's returned. Returns an
 	// `idRemap` (oldIdx -> newIdx) that callers still need for any external references that key
 	// off helix index — gridview node ids, crossover connection ids, etc.
-	// No checks for grid layout or per-(helix,offset) overlap — that is the caller's responsibility.
+	// No checks for grid layout yet
 	export function combineHelices(
 		helices: Nucleotide[][],
 		indices: number[],
@@ -1345,9 +1340,7 @@ namespace helix {
 
 		const valid: number[] = [];
 		const seenIdx = new Set<number>();
-		indices.forEach(raw => {
-			const i = Number(raw);
-			if (!Number.isInteger(i)) return;
+		indices.forEach(i => {
 			if (i < 0 || i >= helices.length) return;
 			if (!Array.isArray(helices[i]) || helices[i].length === 0) return;
 			if (seenIdx.has(i)) return;
@@ -1357,11 +1350,12 @@ namespace helix {
 
 		if (valid.length < 2) return null;
 
+		// merge by keeping the lowest id only
 		valid.sort((a, b) => a - b);
 		const keptIdxOld = valid[0];
 		const mergedIdxOld = valid.slice(1);
 
-		// Move nucleotides into the kept helix, deduping by id.
+		// Move nucleotides into the kept helix, deduping by id
 		const seenNts = new Set<number>(helices[keptIdxOld].map(nt => nt.id));
 		mergedIdxOld.forEach(idx => {
 			helices[idx].forEach(nt => {
@@ -1372,8 +1366,6 @@ namespace helix {
 		});
 
 		// Build an oldIdx -> newIdx remap for every helix that survives the splice.
-		// Removed indices intentionally have no entry; callers should substitute the kept helix
-		// when they encounter a reference to a removed index.
 		const removed = new Set<number>(mergedIdxOld);
 		const idRemap = new Map<number, number>();
 		let shift = 0;
@@ -1385,10 +1377,9 @@ namespace helix {
 			idRemap.set(i, i - shift);
 		}
 
-		// Apply the same remap to the grid so per-nucleotide helixIds stay consistent with the
-		// helices array. Marks pointing at a merged-away helix collapse onto the kept id; marks
-		// on survivors shift down through idRemap. keptIdxOld is the lowest valid index, so its
-		// new id equals its old id — using it directly here is safe.
+		// Apply the same remap to the grid so per-nucleotide helixIds stay consistent with the helices array. 
+		// Marks pointing at a merged-away helix collapse onto the kept id
+		// marks on survivors shift down through idRemap. keptIdxOld is the lowest valid index, so its new id equals its old id
 		grid.forEach(mark => {
 			if (removed.has(mark.helixId)) {
 				mark.helixId = keptIdxOld;
@@ -1410,8 +1401,7 @@ namespace helix {
 		return { keptIdx, mergedIdx: mergedIdxOld, idRemap };
 	}
 
-	// Minimal snapshot shape splitHelices needs. ScadnanoCombineEntry is structurally compatible
-	// (it has all these fields plus more), so callers can pass their journal entry directly.
+	// make a snapshot type for ease of undo/redo functionality.
 	export type CombineSnapshot = {
 		kept: number;                                        // pre-merge index of the kept helix
 		idRemap: Array<[number, number]>;                    // [oldIdx, newIdx] for survivors

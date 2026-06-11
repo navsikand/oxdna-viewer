@@ -271,7 +271,7 @@ namespace toscad {
 
     // helper function. Checks if 2 helices are mutually disjoint (through offsets in the grid). 
     // typically used AFTER aligning the grid otherwise this is nonsense.
-    function disjoint(helices: Nucleotide[][], h1: number, h2: number, grid: GridMap): boolean {
+    export function disjoint(helices: Nucleotide[][], h1: number, h2: number, grid: GridMap): boolean {
         const buildSignedOffsets = (helixId: number): Set<number> => {
             const signedOffsets = new Set<number>();
             const nts = helices[helixId] ?? [];

@@ -240,6 +240,7 @@ var toscad;
         }
         return true;
     }
+    toscad.disjoint = disjoint;
     /* If 2 helices have the same angle as given by getAngleHelix, then check if they are disjoint (big)? If yes, then merge them.
     If they have the same angle and are NOT disjoint, then check anglecorr() function.
     */

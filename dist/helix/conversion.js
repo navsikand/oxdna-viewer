@@ -25,8 +25,6 @@ var toscad;
         if (!nodes.length)
             return null;
         if (nodes.length !== helix.length) {
-            console.log("Holy shit the world is doomed");
-            console.log("Just kidding, there are duplicates in the helix");
             console.log("Did you give 1 helix as input or all of them? This function only takes 1.");
             console.warn("Pay attention something went wrong");
         }

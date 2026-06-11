@@ -197,6 +197,24 @@ class ScadnanoExportManager {
         // slot occupied. The kept helix doesn't need a snapshot — only its members from the
         // merged-away helices need to be pulled back out on undo.
         const sortedIds = [...new Set(ids)].sort((a, b) => a - b);
+
+        // Verify every pair of selected helices is mutually disjoint on the grid. Combining
+        // non-disjoint helices would collide nucleotides into the same offset/direction slot,
+        // so bail out with an error and let the user resolve the overlap first.
+        for (let i = 0; i < sortedIds.length; i++) {
+            for (let j = i + 1; j < sortedIds.length; j++) {
+                const h1 = sortedIds[i];
+                const h2 = sortedIds[j];
+                if (!toscad.disjoint(helices, h1, h2, this.currentScadnanoLayout.grid)) {
+                    notify(
+                        `Cannot combine: helices ${h1} and ${h2} are not disjoint (overlapping nucleotides on the grid).`,
+                        'alert'
+                    );
+                    return;
+                }
+            }
+        }
+
         const willRemoveOld = sortedIds.slice(1);
         const editorNodesBefore = typeof editor.getNodes === 'function'
             ? editor.getNodes() as Array<{ id: number; col: number; row: number }>
