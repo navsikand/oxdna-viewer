@@ -4,6 +4,11 @@ declare module "https://cdn.skypack.dev/dexie" {
   export { EntityTable };
 }
 
+interface Window {
+  getAPIBaseURL: () => string;
+  getAPIBaseUrl: () => string;
+}
+
 declare module "https://cdn.skypack.dev/pako" {
   export interface DeflateOptions {
     level?: number;
