@@ -13,7 +13,7 @@ interface Commit {
         shareUrl: string;
         shareId: string;
         createdAt: Date;
-        expiresAt: Date;
+        expiresAt: Date | null;
     };
 }
 
@@ -21,6 +21,8 @@ interface Structure {
     id: string;
     commits: Commit[]; // Renamed from 'structure' to 'commits'
     branches: { [key: string]: string[] };
+    defaultBranchName?: string;
+    currentBranchName?: string;
     structureName: string;
     date: number;
     isSynced: boolean; // NEW: Indicates if project is synced to backend
@@ -83,7 +85,7 @@ async function initCommitHistory(structureId?: string) {
     const commitsSorted = structure.commits.slice();
     commitsSorted.sort((a: any, b: any) => (a.createdAt || 0) - (b.createdAt || 0));
 
-    const currentBranchName = urlParams.get('branch') || 'main';
+    const currentBranchName = urlParams.get('branch') || structure.currentBranchName || structure.defaultBranchName || 'main';
     console.log(`initCommitHistory: Current branch name is '${currentBranchName}'`);
 
     // Create a map for quick commit lookup and to store children
@@ -126,11 +128,17 @@ async function initCommitHistory(structureId?: string) {
 
     // Create branch head map for easy lookup
     const branchHeads = new Map<string, string>();
+    const commitBranches = new Map<string, string>();
     if (structure.branches) {
         for (const branchName in structure.branches) {
             const commitIds = structure.branches[branchName];
             if (commitIds && commitIds.length > 0) {
                 branchHeads.set(commitIds[commitIds.length - 1], branchName);
+                commitIds.forEach((commitId) => {
+                    if (!commitBranches.has(commitId)) {
+                        commitBranches.set(commitId, branchName);
+                    }
+                });
             }
         }
     }
@@ -217,7 +225,12 @@ async function initCommitHistory(structureId?: string) {
 
             const commitLink = document.createElement('a');
             commitLink.classList.add('commit-link');
-            commitLink.href = `/?structureId=${structureId}&commit=${node.commit.commitId}&load=true`;
+            const commitParams = new URLSearchParams({ structureId, commit: node.commit.commitId, load: 'true' });
+            const branchNameForNode = commitBranches.get(node.commit.commitId) || branchHeads.get(node.commit.commitId);
+            if (branchNameForNode) {
+                commitParams.set('branch', branchNameForNode);
+            }
+            commitLink.href = `/?${commitParams.toString()}`;
             commitLink.textContent = node.commit.commitName;
             commitLink.title = `Commit ID: ${node.commit.commitId}`;
             detailsDiv.appendChild(commitLink);
@@ -303,7 +316,7 @@ async function generateShareInfo(structureId: string, commit: Commit) {
 
         // Construct the full shareable URL
         const baseUrl = window.location.origin;
-        const shareUrl = result.shareUrl || `${baseUrl}/shared?shareId=${result.shareId}`;
+        const shareUrl = result.shareUrl || `${baseUrl}/?shareId=${result.shareId}`;
 
         const shareInfo = {
             shareUrl: shareUrl,

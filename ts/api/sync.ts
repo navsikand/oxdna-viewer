@@ -155,6 +155,7 @@ async function addRemoteCommit(
       commitName: commit.commitName,
       commitData: arrayBufferToBase64(commit.data),
       parentCommitId: parentCommitId,
+      branchName: branchName,
     };
 
     // Pass existing commit ID if available
@@ -330,7 +331,8 @@ async function getProjectCommits(projectId: string): Promise<any[]> {
       id: c.id,
       commitName: c.commitName,
       createdAt: c.createdAt,
-      parentCommitId: c.parentCommitId || null
+      parentCommitId: c.parentCommitId || null,
+      branchName: c.branchName || null
     }));
   } catch (error) {
     console.error("getProjectCommits error:", error);
@@ -539,6 +541,57 @@ async function getPublicProject(projectId: string): Promise<any | null> {
   }
 }
 
+async function getRemoteProject(projectId: string): Promise<any | null> {
+  if (!isLoggedIn()) {
+    return null;
+  }
+
+  try {
+    const API_BASE = `${getAPIBaseUrl()}/sync`;
+    const response = await fetch(`${API_BASE}/project/${projectId}`, {
+      headers: getAuthHeader(),
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const data = await response.json();
+    return data.project || null;
+  } catch (e) {
+    console.error('getRemoteProject error:', e);
+    return null;
+  }
+}
+
+async function updateRemoteProjectRefs(projectId: string, payload: any): Promise<any | null> {
+  if (!isLoggedIn()) {
+    return null;
+  }
+
+  try {
+    const API_BASE = `${getAPIBaseUrl()}/sync`;
+    const response = await fetch(`${API_BASE}/project/${projectId}/refs`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAuthHeader(),
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const data = await response.json();
+    return data.project || null;
+  } catch (e) {
+    console.error('updateRemoteProjectRefs error:', e);
+    return null;
+  }
+}
+
 async function getPublicProjectCommits(projectId: string): Promise<any[]> {
   try {
     const API_BASE = `${getAPIBaseUrl()}/public`;
@@ -580,8 +633,10 @@ async function readPublicCommitData(projectId: string, commitId: string): Promis
 }
 
 (window as any).getPublicProject = getPublicProject;
+(window as any).getRemoteProject = getRemoteProject;
 (window as any).getPublicProjectCommits = getPublicProjectCommits;
 (window as any).readPublicCommitData = readPublicCommitData;
+(window as any).updateRemoteProjectRefs = updateRemoteProjectRefs;
 
 // Export the getAPIBaseUrl function globally for use in other modules
 (window as any).getAPIBaseURL = getAPIBaseUrl;

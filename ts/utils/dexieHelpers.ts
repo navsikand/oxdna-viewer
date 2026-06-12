@@ -6,13 +6,13 @@ class ShareInfo {
   shareUrl: string;
   shareId: string;
   createdAt: Date;
-  expiresAt: Date;
+  expiresAt: Date | null;
 
   constructor(
     shareUrl: string,
     shareId: string,
     createdAt: Date,
-    expiresAt: Date
+    expiresAt: Date | null
   ) {
     this.shareUrl = shareUrl;
     this.shareId = shareId;
@@ -62,6 +62,9 @@ class EntryType {
   structureName: string;
   date: number;
   branches: { [key: string]: string[] };
+  defaultBranchName?: string;
+  currentBranchName?: string;
+  currentCommitId?: string | null;
   isSynced: boolean; // NEW: Indicates if project is synced to backend
   syncedProjectId: string | null; // NEW: References SyncedOxviewProject.id
   isRemote?: boolean; // NEW: Indicates if structure should be deleted on logout
@@ -80,6 +83,9 @@ class EntryType {
     structureName: string,
     date: number,
     branches: { [key: string]: string[] },
+    defaultBranchName: string | undefined,
+    currentBranchName: string | undefined,
+    currentCommitId: string | null | undefined,
     isSynced: boolean,
     syncedProjectId: string | null,
     isRemote?: boolean,
@@ -94,6 +100,9 @@ class EntryType {
     this.structureName = structureName;
     this.date = date;
     this.branches = branches;
+    this.defaultBranchName = defaultBranchName;
+    this.currentBranchName = currentBranchName;
+    this.currentCommitId = currentCommitId;
     this.isSynced = isSynced;
     this.syncedProjectId = syncedProjectId;
     this.isRemote = isRemote;
@@ -129,6 +138,35 @@ DexieDB.version(1).stores({
   remoteStructureData: "id, structureName, isSynced, syncedProjectId, isRemote, publicSourceId, isPublic",
   temporaryStructure: "id",
 });
+
+DexieDB.version(2)
+  .stores({
+    structureData: "id, structureName, isSynced, syncedProjectId, isRemote, publicSourceId, isPublic, currentBranchName, currentCommitId",
+    remoteStructureData: "id, structureName, isSynced, syncedProjectId, isRemote, publicSourceId, isPublic, currentBranchName, currentCommitId",
+    temporaryStructure: "id",
+  })
+  .upgrade((tx) => {
+    return tx
+      .table("structureData")
+      .toCollection()
+      .modify((project: EntryType) => {
+        if ((project as any).syncedProjectId === "") {
+          project.syncedProjectId = null;
+        }
+        if ((project as any).publicSourceId === "") {
+          project.publicSourceId = undefined;
+        }
+        if (!project.defaultBranchName) {
+          project.defaultBranchName = Object.keys(project.branches || {})[0] || "main";
+        }
+        if (!project.currentBranchName) {
+          project.currentBranchName = project.defaultBranchName;
+        }
+        if (!project.currentCommitId && project.currentBranchName && project.branches?.[project.currentBranchName]?.length) {
+          project.currentCommitId = project.branches[project.currentBranchName][project.branches[project.currentBranchName].length - 1] || null;
+        }
+      });
+  });
 
 (window as any).DexieDB = DexieDB;
 

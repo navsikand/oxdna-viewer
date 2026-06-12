@@ -68,6 +68,41 @@ function reconstructBranchesFromParents(commits: any[]) {
   return branches;
 }
 
+function resolveBranchNameFromCommit(structure: any, commitId: string | null | undefined): string | null {
+  if (!commitId || !structure?.branches) {
+    return null;
+  }
+
+  for (const [branchName, commitIds] of Object.entries(structure.branches)) {
+    if ((commitIds as string[]).includes(commitId)) {
+      return branchName;
+    }
+  }
+
+  return null;
+}
+
+function getResolvedCurrentBranchName(structure: any, requestedBranchName: string | null, loadedCommitId: string | null): string {
+  if (requestedBranchName && structure?.branches?.[requestedBranchName]) {
+    return requestedBranchName;
+  }
+
+  const branchFromCommit = resolveBranchNameFromCommit(structure, loadedCommitId);
+  if (branchFromCommit) {
+    return branchFromCommit;
+  }
+
+  if (structure?.currentBranchName && structure?.branches?.[structure.currentBranchName]) {
+    return structure.currentBranchName;
+  }
+
+  if (structure?.defaultBranchName && structure?.branches?.[structure.defaultBranchName]) {
+    return structure.defaultBranchName;
+  }
+
+  return "main";
+}
+
 /**
  * Saves the current structure as a new commit in the specified branch.
  */
@@ -85,7 +120,7 @@ async function saveStructure(): Promise<void> {
     const urlParams = new URLSearchParams(queryString);
 
     const structureId = urlParams.get("structureId") as string;
-    const currentBranchName = urlParams.get("branch") || "main"; // Get current branch from URL
+    const requestedBranchName = urlParams.get("branch");
     const loadedCommitId = urlParams.get("commit"); // Get loaded commit ID from URL
 
     if (!structureId) {
@@ -123,6 +158,9 @@ async function saveStructure(): Promise<void> {
         date: Date.now(),
         structureName: structureName,
         branches: { main: [newCommitId] },
+        defaultBranchName: "main",
+        currentBranchName: "main",
+        currentCommitId: newCommitId,
         isSynced: false, // NEW: Default to not synced
         syncedProjectId: null, // NEW: No synced project ID yet
       };
@@ -134,6 +172,7 @@ async function saveStructure(): Promise<void> {
 
     // (no normalization here)
 
+    const currentBranchName = getResolvedCurrentBranchName(oldStructure, requestedBranchName, loadedCommitId);
     const currentBranchCommits = oldStructure.branches[currentBranchName];
     const headCommitId = currentBranchCommits ? currentBranchCommits[currentBranchCommits.length - 1] : null;
 
@@ -160,7 +199,7 @@ async function saveStructure(): Promise<void> {
         parentCommitId = loadedCommitId; // New commit's parent is the loaded commit
         newBranches[newBranchName].push(newCommitId); // Add new commit to the new branch
         // Redirect to the new branch after commit
-        window.location.href = `/?structureId=${structureId}&branch=${newBranchName}&load=true`;
+        window.location.href = `/?structureId=${structureId}&branch=${encodeURIComponent(newBranchName)}&commit=${newCommitId}&load=true`;
 
       } else { // User chose to override (delete future commits)
         if (currentBranchCommits) {
@@ -238,9 +277,7 @@ async function saveStructure(): Promise<void> {
 
     newStructureArray.push(newCommit);
 
-    // Ensure chronological order and rebuild branches so branch ordering matches timestamps
     sortCommitsChronologically(newStructureArray);
-    newBranches = reconstructBranchesFromParents(newStructureArray);
 
     await (window as any).DexieDB.structureData.put({
       id: structureId,
@@ -248,6 +285,9 @@ async function saveStructure(): Promise<void> {
       date: Date.now(), // Update date on commit
       structureName: oldStructure.structureName,
       branches: newBranches,
+      defaultBranchName: oldStructure.defaultBranchName || "main",
+      currentBranchName: currentBranchName,
+      currentCommitId: newCommitId,
       isSynced: oldStructure.isSynced || false, // Preserve sync status
       syncedProjectId: oldStructure.syncedProjectId || null, // Preserve synced project ID
     });
@@ -294,7 +334,7 @@ async function loadStructure(): Promise<void> {
         }
 
         const explicitCommit = urlParams.get("commit");
-        const commitToFetchId = explicitCommit || publicProject.latestCommitId;
+        const commitToFetchId = explicitCommit || publicProject.currentCommitId || publicProject.latestCommit?.id;
         if (!commitToFetchId) {
           console.error("loadStructure: No commit available for public project.");
           return;
@@ -407,14 +447,19 @@ async function loadStructure(): Promise<void> {
           branches['main'] = orderedCommits.map(c => c.commitId);
         }
 
-        const existing = await (window as any).DexieDB.structureData.get(publicProjectId);
+        const existingProjects = await (window as any).DexieDB.structureData.toArray();
+        const existing = existingProjects.find((project: any) => project.publicSourceId === publicProjectId);
+        const localProjectId = existing?.id || (window as any).createId();
         if (!existing) {
           await (window as any).DexieDB.structureData.put({
-            id: publicProjectId,
+            id: localProjectId,
             commits: orderedCommits,
             date: Date.now(),
             structureName: publicProject.projectName,
-            branches: branches,
+            branches: publicProject.branches || branches,
+            defaultBranchName: publicProject.defaultBranchName || 'main',
+            currentBranchName: publicProject.currentBranchName || publicProject.defaultBranchName || 'main',
+            currentCommitId: publicProject.currentCommitId || commitToFetchId,
             isSynced: false,
             syncedProjectId: null,
             isPublic: true,
@@ -433,9 +478,11 @@ async function loadStructure(): Promise<void> {
             }
           }
 
-          // Now sort the combined commits and reconstruct branches based on parent links
           sortCommitsChronologically(existing.commits);
-          existing.branches = reconstructBranchesFromParents(existing.commits);
+          existing.branches = publicProject.branches || existing.branches || reconstructBranchesFromParents(existing.commits);
+          existing.defaultBranchName = publicProject.defaultBranchName || existing.defaultBranchName || 'main';
+          existing.currentBranchName = publicProject.currentBranchName || existing.currentBranchName || existing.defaultBranchName || 'main';
+          existing.currentCommitId = publicProject.currentCommitId || commitToFetchId;
 
           if (!existing.publicSourceId) existing.publicSourceId = publicProjectId;
           existing.date = Date.now();
@@ -443,7 +490,16 @@ async function loadStructure(): Promise<void> {
           console.log(`loadStructure: Merged public project history; added ${added} new commits.`);
         }
 
-        id = publicProjectId;
+        id = localProjectId;
+        const nextParams = new URLSearchParams(window.location.search);
+        nextParams.delete('publicProject');
+        nextParams.set('structureId', localProjectId);
+        nextParams.set('load', 'true');
+        nextParams.set('commit', commitToFetchId);
+        if (publicProject.currentBranchName || publicProject.defaultBranchName) {
+          nextParams.set('branch', publicProject.currentBranchName || publicProject.defaultBranchName);
+        }
+        window.history.replaceState({}, '', `/?${nextParams.toString()}`);
         console.log(`loadStructure: Public project saved; continuing with id ${id}.`);
       } catch (e) {
         console.error("loadStructure: Error while preparing public project:", e);
@@ -465,7 +521,7 @@ async function loadStructure(): Promise<void> {
 
     let commitToLoad;
     const commitId = urlParams.get("commit");
-    const branchName = urlParams.get("branch");
+    let branchName = urlParams.get("branch");
 
     if (commitId) {
       console.log(`loadStructure: Specific commitId provided: ${commitId}.`);
@@ -473,6 +529,9 @@ async function loadStructure(): Promise<void> {
       if (!commitToLoad) {
         console.error(`loadStructure: Commit with ID ${commitId} not found in structure ${id}.`);
         return; // Exit early if specific commit not found
+      }
+      if (!branchName) {
+        branchName = resolveBranchNameFromCommit(storedData, commitId) || storedData.currentBranchName || storedData.defaultBranchName || 'main';
       }
       console.log("loadStructure: Specific commit found.", commitToLoad);
     } else {
@@ -501,11 +560,27 @@ async function loadStructure(): Promise<void> {
 
       if (!commitToLoad && storedData.commits.length > 0) { // Updated to use 'commits'
         commitToLoad = storedData.commits[storedData.commits.length - 1]; // Updated to use 'commits'
+        branchName = resolveBranchNameFromCommit(storedData, commitToLoad.commitId) || storedData.currentBranchName || storedData.defaultBranchName || 'main';
         console.warn(`loadStructure: Falling back to last commit in structure ${id} as no specific commit or branch head could be determined.`);
       }
     }
 
     if (commitToLoad) {
+      await (window as any).DexieDB.structureData.update(id, {
+        currentBranchName: branchName || storedData.currentBranchName || storedData.defaultBranchName || 'main',
+        currentCommitId: commitToLoad.commitId,
+      });
+
+      const resolvedParams = new URLSearchParams(window.location.search);
+      resolvedParams.set('structureId', id);
+      resolvedParams.set('load', 'true');
+      resolvedParams.set('commit', commitToLoad.commitId);
+      if (branchName) {
+        resolvedParams.set('branch', branchName);
+      }
+      resolvedParams.delete('publicProject');
+      window.history.replaceState({}, '', `/?${resolvedParams.toString()}`);
+
       console.log("loadStructure: Commit selected for loading.", commitToLoad);
 
       // Handle encrypted commits - decrypt on-the-fly
@@ -699,6 +774,9 @@ async function createNewProject() {
           date: Date.now(),
           structureName: structureName,
           branches: { main: [newCommitId] },
+          defaultBranchName: "main",
+          currentBranchName: "main",
+          currentCommitId: newCommitId,
           isSynced: false, // NEW: Default to not synced
           syncedProjectId: null, // NEW: No synced project ID yet
         };
@@ -761,6 +839,9 @@ async function createBlankProject() {
     date: Date.now(),
     structureName: structureName,
     branches: { main: [newCommitId] }, // Main branch points to the initial commit
+    defaultBranchName: "main",
+    currentBranchName: "main",
+    currentCommitId: newCommitId,
     isSynced: false, // NEW: Default to not synced
     syncedProjectId: null, // NEW: No synced project ID yet
   };
