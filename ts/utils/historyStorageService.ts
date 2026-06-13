@@ -3,6 +3,10 @@
 
 import { deflate, inflate } from "https://cdn.skypack.dev/pako";
 
+function getDashboardLoginPath(): string {
+  return window.location.origin + "/dist/dash/login";
+}
+
 function createCompressedOxViewFile(
   space?: string | number,
 ): Uint8Array {
@@ -195,7 +199,10 @@ async function saveStructure(): Promise<void> {
           alert("Branch name already exists. Please choose a different name.");
           return; // Stop the commit process
         }
-        newBranches[newBranchName] = [loadedCommitId]; // New branch starts from the loaded commit
+        const loadedCommitIndex = currentBranchCommits ? currentBranchCommits.indexOf(loadedCommitId) : -1;
+        newBranches[newBranchName] = loadedCommitIndex >= 0
+          ? currentBranchCommits.slice(0, loadedCommitIndex + 1)
+          : [loadedCommitId];
         parentCommitId = loadedCommitId; // New commit's parent is the loaded commit
         newBranches[newBranchName].push(newCommitId); // Add new commit to the new branch
         // Redirect to the new branch after commit
@@ -280,6 +287,7 @@ async function saveStructure(): Promise<void> {
     sortCommitsChronologically(newStructureArray);
 
     await (window as any).DexieDB.structureData.put({
+      ...oldStructure,
       id: structureId,
       commits: newStructureArray, // Updated to use 'commits'
       date: Date.now(), // Update date on commit
@@ -374,8 +382,7 @@ async function loadStructure(): Promise<void> {
           } else {
             dataBuf = await (window as any).readPublicCommitData(publicProjectId, c.id);
             if (!dataBuf) {
-              console.warn(`loadStructure: Skipping commit ${c.id} - data fetch failed.`);
-              continue;
+              throw new Error(`Failed to read public commit data for ${c.id}`);
             }
           }
           commitsToStore.push({
@@ -383,7 +390,8 @@ async function loadStructure(): Promise<void> {
             commitName: c.commitName || 'Commit',
             data: dataBuf,
             parent: c.parentCommitId || null,
-            createdAt: c.createdAt || null
+            branchName: c.branchName || null,
+            createdAt: c.createdAt ? new Date(c.createdAt).getTime() : Date.now()
           });
         }
 
@@ -450,7 +458,43 @@ async function loadStructure(): Promise<void> {
         const existingProjects = await (window as any).DexieDB.structureData.toArray();
         const existing = existingProjects.find((project: any) => project.publicSourceId === publicProjectId);
         const localProjectId = existing?.id || (window as any).createId();
-        if (!existing) {
+        let cancelledRemoteRefresh = false;
+        if (existing) {
+          const remoteIds = new Set(orderedCommits.map((commit: any) => commit.commitId).filter(Boolean));
+          const hasLocalOnlyCommits = (existing.commits || [])
+            .map((commit: any) => commit.commitId)
+            .filter(Boolean)
+            .some((commitId: string) => !remoteIds.has(commitId));
+          if (hasLocalOnlyCommits && !window.confirm("This public clone has local-only commits. Reloading from the public source will discard those local changes. Continue?")) {
+            id = localProjectId;
+            cancelledRemoteRefresh = true;
+            const nextParams = new URLSearchParams(window.location.search);
+            nextParams.delete('publicProject');
+            nextParams.set('structureId', localProjectId);
+            nextParams.set('load', 'true');
+            const existingCommitId = existing.currentCommitId || existing.commits?.[existing.commits.length - 1]?.commitId;
+            urlParams.delete('publicProject');
+            urlParams.set('structureId', localProjectId);
+            urlParams.set('load', 'true');
+            if (existingCommitId) {
+              nextParams.set('commit', existingCommitId);
+              urlParams.set('commit', existingCommitId);
+            } else {
+              urlParams.delete('commit');
+            }
+            if (existing.currentBranchName || existing.defaultBranchName) {
+              nextParams.set('branch', existing.currentBranchName || existing.defaultBranchName);
+              urlParams.set('branch', existing.currentBranchName || existing.defaultBranchName);
+            } else {
+              urlParams.delete('branch');
+            }
+            window.history.replaceState({}, '', `/?${nextParams.toString()}`);
+            console.warn("loadStructure: Public project refresh cancelled to preserve local-only commits.");
+          }
+        }
+        if (cancelledRemoteRefresh) {
+          console.log(`loadStructure: Continuing with existing public clone ${localProjectId}.`);
+        } else if (!existing) {
           await (window as any).DexieDB.structureData.put({
             id: localProjectId,
             commits: orderedCommits,
@@ -468,39 +512,35 @@ async function loadStructure(): Promise<void> {
           });
           console.log(`loadStructure: Stored cloned public project with ${orderedCommits.length} commits locally.`);
         } else {
-          // Merge: add missing commits
-          const existingIds = new Set(existing.commits.map((c: any) => c.commitId));
-          let added = 0;
-          for (const oc of orderedCommits) {
-            if (!existingIds.has(oc.commitId)) {
-              existing.commits.push(oc);
-              added++;
-            }
-          }
-
-          sortCommitsChronologically(existing.commits);
-          existing.branches = publicProject.branches || existing.branches || reconstructBranchesFromParents(existing.commits);
+          existing.commits = orderedCommits;
+          existing.branches = publicProject.branches || branches;
           existing.defaultBranchName = publicProject.defaultBranchName || existing.defaultBranchName || 'main';
           existing.currentBranchName = publicProject.currentBranchName || existing.currentBranchName || existing.defaultBranchName || 'main';
           existing.currentCommitId = publicProject.currentCommitId || commitToFetchId;
-
-          if (!existing.publicSourceId) existing.publicSourceId = publicProjectId;
+          existing.structureName = publicProject.projectName || existing.structureName;
+          existing.isSynced = false;
+          existing.syncedProjectId = null;
+          existing.isPublic = true;
+          existing.isRemote = false;
+          existing.publicSourceId = publicProjectId;
           existing.date = Date.now();
           await (window as any).DexieDB.structureData.put(existing);
-          console.log(`loadStructure: Merged public project history; added ${added} new commits.`);
+          console.log(`loadStructure: Replaced public project clone with ${orderedCommits.length} remote commits.`);
         }
 
-        id = localProjectId;
-        const nextParams = new URLSearchParams(window.location.search);
-        nextParams.delete('publicProject');
-        nextParams.set('structureId', localProjectId);
-        nextParams.set('load', 'true');
-        nextParams.set('commit', commitToFetchId);
-        if (publicProject.currentBranchName || publicProject.defaultBranchName) {
-          nextParams.set('branch', publicProject.currentBranchName || publicProject.defaultBranchName);
+        if (!cancelledRemoteRefresh) {
+          id = localProjectId;
+          const nextParams = new URLSearchParams(window.location.search);
+          nextParams.delete('publicProject');
+          nextParams.set('structureId', localProjectId);
+          nextParams.set('load', 'true');
+          nextParams.set('commit', commitToFetchId);
+          if (publicProject.currentBranchName || publicProject.defaultBranchName) {
+            nextParams.set('branch', publicProject.currentBranchName || publicProject.defaultBranchName);
+          }
+          window.history.replaceState({}, '', `/?${nextParams.toString()}`);
+          console.log(`loadStructure: Public project saved; continuing with id ${id}.`);
         }
-        window.history.replaceState({}, '', `/?${nextParams.toString()}`);
-        console.log(`loadStructure: Public project saved; continuing with id ${id}.`);
       } catch (e) {
         console.error("loadStructure: Error while preparing public project:", e);
         return;
@@ -616,7 +656,7 @@ async function loadStructure(): Promise<void> {
           if (!keyBase64) {
             console.error("loadStructure: No valid encryption key - redirecting to login");
             alert('Your encryption key has expired. Please log in again to access encrypted structures.');
-            window.location.href = '/login';
+            window.location.href = getDashboardLoginPath();
             return;
           }
 
@@ -659,7 +699,7 @@ async function loadStructure(): Promise<void> {
         } catch (error) {
           console.error("loadStructure: Failed to decrypt commit:", error);
           alert('Failed to decrypt structure. Please log in again.');
-          window.location.href = '/login';
+          window.location.href = getDashboardLoginPath();
           return;
         }
       }

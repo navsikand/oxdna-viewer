@@ -9,6 +9,9 @@ interface Commit {
     commitName: string;
     parent: string | null;
     data?: any;
+    isEncrypted?: boolean;
+    encryptedData?: ArrayBuffer;
+    iv?: ArrayBuffer;
     shareInfo?: {
         shareUrl: string;
         shareId: string;
@@ -76,7 +79,9 @@ async function initCommitHistory(structureId?: string) {
 
     if (!structure || !structure.commits || !Array.isArray(structure.commits)) { // Updated to use 'commits'
         console.error(`initCommitHistory ERROR: Structure with id ${structureId} not found or is malformed.`, structure);
-        commitGraphElement.innerHTML = `<p>Error: Structure with id ${structureId} not found or is invalid.</p>`;
+        const errorMessage = document.createElement('p');
+        errorMessage.textContent = `Error: Structure with id ${structureId} not found or is invalid.`;
+        commitGraphElement.replaceChildren(errorMessage);
         return;
     }
     console.log("initCommitHistory: Successfully retrieved structure:", structure);
@@ -292,6 +297,11 @@ async function generateShareInfo(structureId: string, commit: Commit) {
             throw new Error("Structure not found");
         }
 
+        if (commit.isEncrypted || !commit.data || commit.data.byteLength === 0) {
+            alert("This commit is encrypted or locked. Open it in oxView after signing in, then share the decrypted commit.");
+            throw new Error("Cannot share encrypted or locked commit data from commit history");
+        }
+
         // Convert ArrayBuffer to base64 string
         const uint8Array = new Uint8Array(commit.data);
         const binaryString = Array.from(uint8Array, byte => String.fromCharCode(byte)).join('');
@@ -381,15 +391,50 @@ async function handleCommitShareWithPopup(structureId: string, commit: Commit) {
             z-index: 999;
         `;
 
-        // Create content
+        // Create content without innerHTML so share URLs cannot inject markup.
         const content = document.createElement('div');
-        content.innerHTML = `
-            <h3>Share Link</h3>
-            <p>Your share link:</p>
-            <input type="text" id="share-url-input" value="${shareUrl}" readonly style="width: 100%; padding: 8px; margin: 10px 0; border: 1px solid #ccc; border-radius: 4px;">
-            <button id="copy-button" style="padding: 8px 16px; background: #3498db; color: white; border: none; border-radius: 4px; cursor: pointer;">Copy to Clipboard</button>
-            <button id="close-button" style="margin-left: 10px; padding: 8px 16px; background: #95a5a6; color: white; border: none; border-radius: 4px; cursor: pointer;">Close</button>
-        `;
+        const heading = document.createElement('h3');
+        heading.textContent = 'Share Link';
+        content.appendChild(heading);
+
+        const description = document.createElement('p');
+        description.textContent = 'Your share link:';
+        content.appendChild(description);
+
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.id = 'share-url-input';
+        input.value = shareUrl;
+        input.readOnly = true;
+        input.style.width = '100%';
+        input.style.padding = '8px';
+        input.style.margin = '10px 0';
+        input.style.border = '1px solid #ccc';
+        input.style.borderRadius = '4px';
+        content.appendChild(input);
+
+        const copyButtonEl = document.createElement('button');
+        copyButtonEl.id = 'copy-button';
+        copyButtonEl.textContent = 'Copy to Clipboard';
+        copyButtonEl.style.padding = '8px 16px';
+        copyButtonEl.style.background = '#3498db';
+        copyButtonEl.style.color = 'white';
+        copyButtonEl.style.border = 'none';
+        copyButtonEl.style.borderRadius = '4px';
+        copyButtonEl.style.cursor = 'pointer';
+        content.appendChild(copyButtonEl);
+
+        const closeButtonEl = document.createElement('button');
+        closeButtonEl.id = 'close-button';
+        closeButtonEl.textContent = 'Close';
+        closeButtonEl.style.marginLeft = '10px';
+        closeButtonEl.style.padding = '8px 16px';
+        closeButtonEl.style.background = '#95a5a6';
+        closeButtonEl.style.color = 'white';
+        closeButtonEl.style.border = 'none';
+        closeButtonEl.style.borderRadius = '4px';
+        closeButtonEl.style.cursor = 'pointer';
+        content.appendChild(closeButtonEl);
 
         popup.appendChild(content);
         document.body.appendChild(overlay);

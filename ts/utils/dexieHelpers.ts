@@ -28,6 +28,7 @@ class CommitType {
   parent: string | null;
   createdAt?: number | Date;
   shareInfo?: ShareInfo;
+  branchName?: string | null;
   // NEW: Encryption metadata
   isEncrypted?: boolean;
   encryptedData?: ArrayBuffer;
@@ -40,6 +41,7 @@ class CommitType {
     parent: string | null,
     shareInfo?: ShareInfo,
     createdAt?: number | Date,
+    branchName?: string | null,
     isEncrypted?: boolean,
     encryptedData?: ArrayBuffer,
     iv?: ArrayBuffer
@@ -50,6 +52,7 @@ class CommitType {
     this.parent = parent;
     this.shareInfo = shareInfo;
     this.createdAt = createdAt;
+    this.branchName = branchName;
     this.isEncrypted = isEncrypted;
     this.encryptedData = encryptedData;
     this.iv = iv;
@@ -126,6 +129,41 @@ class TemporaryStructure {
   }
 }
 
+function reconstructBranchesForLegacyProject(commits: CommitType[] | undefined): { [key: string]: string[] } {
+  if (!commits || commits.length === 0) {
+    return { main: [] };
+  }
+
+  const parentById = new Map<string, string | null>();
+  const childIds = new Set<string>();
+  for (const commit of commits) {
+    parentById.set(commit.commitId, commit.parent || null);
+    if (commit.parent) {
+      childIds.add(commit.parent);
+    }
+  }
+
+  const leaves = commits.filter((commit) => !childIds.has(commit.commitId));
+  if (leaves.length === 0) {
+    return { main: commits.map((commit) => commit.commitId) };
+  }
+
+  const branches: { [key: string]: string[] } = {};
+  leaves.forEach((leaf, index) => {
+    const branchCommits: string[] = [];
+    const seen = new Set<string>();
+    let cursor: string | null = leaf.commitId;
+    while (cursor && !seen.has(cursor)) {
+      seen.add(cursor);
+      branchCommits.unshift(cursor);
+      cursor = parentById.get(cursor) || null;
+    }
+    branches[index === 0 ? "main" : `branch ${index + 1}`] = branchCommits;
+  });
+
+  return branches;
+}
+
 const DexieDB = new Dexie("Structures") as Dexie & {
   structureData: Dexie.Table<EntryType, string>;
   remoteStructureData: Dexie.Table<EntryType, string>;
@@ -155,6 +193,9 @@ DexieDB.version(2)
         }
         if ((project as any).publicSourceId === "") {
           project.publicSourceId = undefined;
+        }
+        if (!project.branches || Object.keys(project.branches).length === 0) {
+          project.branches = reconstructBranchesForLegacyProject(project.commits);
         }
         if (!project.defaultBranchName) {
           project.defaultBranchName = Object.keys(project.branches || {})[0] || "main";

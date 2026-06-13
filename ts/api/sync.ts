@@ -581,14 +581,15 @@ async function updateRemoteProjectRefs(projectId: string, payload: any): Promise
     });
 
     if (!response.ok) {
-      return null;
+      const errorText = await response.text();
+      throw new Error(`Failed to update remote branch metadata (${response.status}): ${errorText || response.statusText}`);
     }
 
     const data = await response.json();
     return data.project || null;
   } catch (e) {
     console.error('updateRemoteProjectRefs error:', e);
-    return null;
+    throw e;
   }
 }
 
@@ -604,7 +605,8 @@ async function getPublicProjectCommits(projectId: string): Promise<any[]> {
       id: c.id,
       commitName: c.commitName,
       createdAt: c.createdAt,
-      parentCommitId: c.parentCommitId || null
+      parentCommitId: c.parentCommitId || null,
+      branchName: c.branchName || null
     }));
   } catch (e) {
     console.error('getPublicProjectCommits error:', e);
