@@ -214,7 +214,8 @@ function parseTop(s: string) {
             }
             strID = parseInt(l[0]);
                 
-            if (strID != lastStrand) { //if new strand id, make new strand                        
+            if (strID != lastStrand) { //if new strand id, make new strand     
+                currentStrand.updateEnds();                  
                 type = strandTypeFromLine(l)
                 currentStrand = system.createStrandTyped(type);
             };
@@ -261,7 +262,6 @@ function parseTop(s: string) {
                 
             lastStrand = strID;
         });
-        nucCount = elements.getNextId();
     }
 
     const system = new System(systems.length, elements.getNextId());
@@ -837,29 +837,21 @@ function readPdbFile(file) {
                     
                     let id = startID;
 
+                    view.setInputBool("topFormat", true); // PDB/MMCIF strands are 5'→3', match output format
+
                     // store PDB data
-                    let pdata = new pdbinfowrapper(pdbtemp[6][0], pdbtemp[6][1], pdbtemp[6][2]);
+                    const pdata = new pdbinfowrapper(pdbtemp[6][0], pdbtemp[6][1], pdbtemp[6][2]);
                     pdata.disulphideBonds = pdbtemp[6][3];
                     pdbFileInfo.push(pdata);
 
-                    pdata = undefined;
-                    // pdbinfo = undefined;
-
                     // store B factor Data in global graphDatasets
-                    let gdata = new graphData(gd[0], gd[1], gd[2], gd[3], gd[4]);
+                    const gdata = new graphData(gd[0], gd[1], gd[2], gd[3], gd[4]);
                     graphDatasets.push(gdata);
 
-                    gdata = undefined;
-                    gd = undefined;
-
-                    // redraw box so nucleotides will be drawn with backbone connectors
-                    if(box.x < dims[0]) box.x = dims[0]*1.25;
-                    if(box.y < dims[1]) box.y = dims[1]*1.25;
-                    if(box.z < dims[2]) box.z = dims[2]*1.25;
+                    // Set box size based on loaded structure size
+                    const maxdim = Math.max(...dims)*1.25;
+                    box.clampScalar(maxdim, Infinity);
                     redrawBox();
-
-                    dims = undefined;
-
                     
                     for(let i = 0; i< pdbtemp[0].length; i++){
                         if(strandID[i] == "pro"){
@@ -870,8 +862,8 @@ function readPdbFile(file) {
                                 AA.pdbindices = pdbindices[AA.sid];
                                 if (j != 0) {
                                     let prevaa = elements.get(id-1); //Get previous Element
-                                    AA.n3 = prevaa;
-                                    prevaa.n5 = AA;
+                                    AA.n5 = prevaa;
+                                    prevaa.n3 = AA;
                                 }
                                 elements.push(AA);
                                 id++;
@@ -890,8 +882,8 @@ function readPdbFile(file) {
                                 nc.pdbindices = pdbindices[nc.sid];
                                 if (j != 0) {
                                     let prevnc = elements.get(id-1); //Get previous Element
-                                    nc.n3 = prevnc;
-                                    prevnc.n5 = nc;
+                                    nc.n5 = prevnc;
+                                    prevnc.n3 = nc;
                                 }
                                 elements.push(nc);
                                 id++;
@@ -918,11 +910,13 @@ function readPdbFile(file) {
                                 count++;
                             }
                         } else if (strand.isNucleicAcid()) {
-                            for (let k = 0; k < strand.getLength(); k++) {
-                                let Nuc = elements.get(startID+count) as Nucleotide;
+                            let strandLen = pdbtemp[0][i].length;
+                            // Process 3'→5' so n3 is always positioned before the bbcon is computed
+                            for (let k = strandLen - 1; k >= 0; k--) {
+                                let Nuc = elements.get(startID+count+k) as Nucleotide;
                                 FillInfoNC(pdbtemp[0][i][k], Nuc, com);
-                                count++;
                             }
+                            count += strandLen;
                         }
                     }
 
@@ -931,10 +925,12 @@ function readPdbFile(file) {
                     addSystemToScene(sys);
                     systems.push(sys);
 
+                    centerAndPBC(sys.getMonomers(), box)
+
                     if(flux.fluxWindowOpen) view.addGraphData(graphDatasets.length-1); // add to flux window if open, otherwise it'll be added on next opening
 
                     // notify("ANM Fitting Complete, Please check under Available Datasets in the Fluctuation Solver");
-                    resolve(message.data);
+                    resolve(sys);
                 }
             }
             worker.onmessage = callback;
@@ -945,8 +941,150 @@ function readPdbFile(file) {
         return promise;
     }
 
-    activate();
     pdbtemp=[];
-    return(sys)
+    return activate();
+
+}
+
+function readMmcifFile(file) {
+    let reader = new FileReader();
+    var worker = new Worker('./dist/file_handling/mmcif_worker.js');
+    let indx = -1;
+    // initialize System
+    let startID = elements.getNextId();
+    var sys = new System(systems.length, startID);
+
+    reader.onload = () => {
+        const mmcifText = reader.result as string;
+        // feed raw text into worker
+        let transfer = [mmcifText, pdbFileInfo.length, elements.getNextId(), systems.length];
+        worker.postMessage(transfer);
+    }
+
+    function activate() {
+        var promise = new Promise(function (resolve, reject) {
+            var counter = 0;
+            var callback = function (message) {
+                counter++;
+                pdbtemp = message.data;
+
+                if (counter >= 1 && pdbtemp.length > 0) {
+
+                    worker.terminate();
+
+                    let strandID = pdbtemp[1];
+                    let com = pdbtemp[2];
+                    let gd = pdbtemp[3];
+                    let dims = pdbtemp[4];
+                    let pdbindices = pdbtemp[5];
+
+                    let id = startID;
+
+                    view.setInputBool("topFormat", true); // PDB/MMCIF strands are 5'→3', match output format
+
+                    // store PDB data
+                    let pdata = new pdbinfowrapper(pdbtemp[6][0], pdbtemp[6][1], pdbtemp[6][2]);
+                    pdata.disulphideBonds = pdbtemp[6][3];
+                    pdbFileInfo.push(pdata);
+                    pdata = undefined;
+
+                    // store B factor Data in global graphDatasets
+                    let gdata = new graphData(gd[0], gd[1], gd[2], gd[3], gd[4]);
+                    graphDatasets.push(gdata);
+                    gdata = undefined;
+                    gd = undefined;
+
+                    // Set box size based on loaded structure size
+                    const maxdim = Math.max(...dims)*1.25;
+                    box.clampScalar(maxdim, Infinity);
+                    redrawBox();
+
+                    for(let i = 0; i < pdbtemp[0].length; i++){
+                        if(strandID[i] == "pro"){
+                            let currentstrand = sys.addNewPeptideStrand()
+                            for(let j = 0; j < pdbtemp[0][i].length; j++){
+                                let AA = currentstrand.createBasicElement(id);
+                                AA.sid = id - startID;
+                                AA.pdbindices = pdbindices[AA.sid];
+                                if (j != 0) {
+                                    let prevaa = elements.get(id-1);
+                                    AA.n5 = prevaa;
+                                    prevaa.n3 = AA;
+                                }
+                                elements.push(AA);
+                                id++;
+                            }
+
+                            if(currentstrand.end3 == undefined){
+                                console.log("Strand " + currentstrand.id + " could not be initialized")
+                            } else {
+                                currentstrand.updateEnds();
+                            }
+                        } else if (['dna', 'rna'].includes(strandID[i])){
+                            let currentstrand = sys.addNewNucleicAcidStrand(strandID[i].toUpperCase());
+                            for(let j = 0; j < pdbtemp[0][i].length; j++){
+                                let nc = currentstrand.createBasicElementTyped(strandID[i], id);
+                                nc.sid = id - startID;
+                                nc.pdbindices = pdbindices[nc.sid];
+                                if (j != 0) {
+                                    let prevnc = elements.get(id-1);
+                                    nc.n5 = prevnc;
+                                    prevnc.n3 = nc;
+                                }
+                                elements.push(nc);
+                                id++;
+                            }
+
+                            if(currentstrand.end3 == undefined){
+                                console.log("Strand " + currentstrand.id + " could not be initialized")
+                            } else {
+                                currentstrand.updateEnds();
+                            }
+                        }
+                    }
+
+                    sys.initInstances(sys.systemLength())
+                    // Load monomer info
+                    let count = 0;
+                    for (let i: number = 0; i < pdbtemp[0].length; i++) {
+                        let strand = sys.strands[i];
+
+                        if (strand.isPeptide()) {
+                            for (let k = 0; k < strand.getLength(); k++) {
+                                let Amino = elements.get(startID+count) as AminoAcid;
+                                FillInfoAA(pdbtemp[0][i][k], Amino, com);
+                                count++;
+                            }
+                        } else if (strand.isNucleicAcid()) {
+                            let strandLen = pdbtemp[0][i].length;
+                            // Process 3'→5' so n3 is always positioned before the bbcon is computed
+                            for (let k = strandLen - 1; k >= 0; k--) {
+                                let Nuc = elements.get(startID+count+k) as Nucleotide;
+                                FillInfoNC(pdbtemp[0][i][k], Nuc, com);
+                            }
+                            count += strandLen;
+                        }
+                    }
+
+                    sys.fillDefaultColors();
+                    addSystemToScene(sys);
+                    systems.push(sys);
+
+                    centerAndPBC(sys.getMonomers(), box)
+
+                    if(flux.fluxWindowOpen) view.addGraphData(graphDatasets.length-1);
+
+                    resolve(sys);
+                }
+            }
+            worker.onmessage = callback;
+            reader.readAsText(file);
+            notify("Reading mmCIF file...")
+        });
+        return promise;
+    }
+
+    pdbtemp=[];
+    return activate();
 
 }

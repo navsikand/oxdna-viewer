@@ -2,7 +2,26 @@
 <html lang="en" xmlns="http://www.w3.org/1999/html">
 
 <head>
-    <link rel="shortcut icon" type="image/png" href="favicon.png">
+    <!-- Favicon (legacy + default) -->
+    <link rel="icon" href="./favicons/favicon.ico" sizes="any">
+    <link rel="icon" type="image/png" href="./favicons/favicon-32x32.png" sizes="32x32">
+    <link rel="icon" type="image/png" href="./favicons/favicon-16x16.png" sizes="16x16">
+
+    <!-- Apple / iOS -->
+    <link rel="apple-touch-icon" href="/favicons/apple-touch-icon.png" sizes="180x180">
+
+    <!-- PWA / Android -->
+    <link rel="manifest" href="/oxdna-viewer/favicons/site.webmanifest">
+    <link rel="icon" type="image/png" href="./favicons/android-chrome-192x192.png" sizes="192x192">
+    <link rel="icon" type="image/png" href="./favicons/android-chrome-512x512.png" sizes="512x512">
+
+    <!-- Windows tiles (optional) -->
+    <meta name="msapplication-TileImage" content="./favicons/mstile-150x150.png">
+    <meta name="msapplication-TileColor" content="#ffffff">
+
+    <!--<link rel="shortcut icon" type="image/png" href="/favicons/favicon.ico"> -->
+
+    <script async src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <!-- Global site tag (gtag.js) - Google Analytics -->
     <script async src="https://www.googletagmanager.com/gtag/js?id=UA-171800090-1"></script>
     <script>
@@ -153,22 +172,22 @@
     </div>
 
     <div id='importPDBDialog' class="dialog" data-role="dialog">
-        <h2>Import PDB</h2>
-        Type a PDB identifier below to load the corresponding structure into oxView. If you already have a PDB file on your computer you can simply drag and drop it (or use the "Open" dialog).
+        <h2>Import mmCIF</h2>
+        Type a PDB identifier below to load the corresponding mmCIF structure into oxView. If you already have a .cif file on your computer you can simply drag and drop it (or use the "Open" dialog).
         <input type="text" value="6KIX" data-role="input" data-prepend="PDB ID" id="importPDBID">
         <div class="dialog-actions">
             <button class="button js-dialog-close">Cancel</button>
-            <button onclick="readPDBFromId(document.getElementById('importPDBID').value)" class="button primary js-dialog-close">Import</button>
+            <button onclick="readMMCIFFromId(document.getElementById('importPDBID').value)" class="button primary js-dialog-close">Import</button>
         </div>
     </div>
     
     <div id='importNanobaseDialog' class="dialog" data-role="dialog">
         <h2>Import Nanobase</h2>
         Type the link of a Nanobase structure to load it into oxView.
-        <input type="text" value="https://nanobase.org/structure/15" data-role="input" data-prepend="URL" id="importNanobase">
+        <input type="text" value="https://nanobase.org/structures/15" data-role="input" data-prepend="URL" id="importNanobase">
         <div class="dialog-actions">
             <button class="button js-dialog-close">Cancel</button>
-            <button onclick="readNanobaseFromURL(document.getElementById('importNanobase').value)" class="button primary js-dialog-close">Import</button>
+            <button id="importFromNanobaseButton" class="button primary js-dialog-close">Import</button>
         </div>
     </div>
 
@@ -280,7 +299,8 @@
         <div style="display: table-column">
             <div style="display: table-row-group">
                 <input type="checkbox" id="topDownload" data-caption="Topology" title="Identies and connections of particles" checked data-role="checkbox">
-                <input type="checkbox" id="topFormat" data-caption="Use new top format (experimental)" title="New 5'-3' topology format" data-role="checkbox">
+                <input type="checkbox" id="topFormat" data-caption="Use new top format (SOON DEFAULT)" title="New 5'-3' topology format" data-role="checkbox">
+
             </div>
             <div style="display: table-row-group">
                 <input type="checkbox" id="datDownload" data-caption="Configuration" title="The xyz positions and rotations of particles" checked data-role="checkbox">
@@ -430,7 +450,7 @@
                         <img src="img/ico/taco_logo.png" height="30px">
                         <span class="caption">Taco</span>
                     </button>
-                    <button class="ribbon-button primary" onclick="Metro.dialog.open('#importPDBDialog')" title="Import PDB from ID" id="import-button" style="width: 50px;">
+                    <button class="ribbon-button primary" onclick="Metro.dialog.open('#importPDBDialog')" title="Import mmCIF from ID" id="import-button" style="width: 50px;">
                         <!-- <span class="mif-file-upload mif-2x"></span> -->
                         <img src="https://www.rcsb.org/favicon.ico" height="40px">
                         <!--<span class="caption">PDB</span>-->
@@ -837,7 +857,7 @@
                             <select id='NA_toggle'>
                                 <option value='DNA' selected='selected'>DNA</option>
                                 <option value='RNA'>RNA</option>
-                            <select>
+                            </select>
                             <span id='seqLen'>0</span>"
                         data-history="true" data-prevent-submit="true"
                         placeholder="Type a sequence here"
@@ -1370,6 +1390,7 @@
 
     <!-- Metro 4 -->
     <script src="./ts/lib/metro.min.js"></script>
+
     <div class="main">
         <!--all files to be loaded onload of html file-->
         <script src="./ts/lib/chart.min.js"></script>
@@ -1387,14 +1408,65 @@
         <script src="./dist/scene/instancing.js"></script>
         <script src="./dist/scene/mesh_setup.js"></script>
         <script src="./dist/file_handling/io.js"></script>
-        <script src="./dist/model/force.js"></script>
-        <script src="./dist/scene/PBC_switchbox.js"></script>
         <script src="./dist/file_handling/file_getters.js"></script>
+        
+        <script src="https://cdn.jsdelivr.net/npm/fzstd@0.1.1/umd/index.min.js"></script>
+        <script>
+            window.fzstd = fzstd;
+        </script>
+        
         <script src="./dist/file_handling/file_handling.js"></script>
+
         <script src="./dist/file_handling/system_readers.js"></script>
         <script src="./dist/file_handling/aux_readers.js"></script>
+        <script src="./dist/model/force.js"></script>
+        <script src="./dist/scene/PBC_switchbox.js"></script>
+        <script type="module">
+            // const apiRoot= "http://localhost:3002/api/v1";
+            const apiRoot= "https://api.nanobase.org/api/v1";
+
+            function readNanobaseFromURL(structureId) {
+                (async () => {
+                    const response = await fetch(`${apiRoot}/structure/getStructureOxdnaFiles?id=${structureId}`);
+
+                    if (!response.ok) {
+                        console.error("Failed to fetch oxdna files:", response.status);
+                        return;
+                    }
+
+                    const fileDataBlob = await response.blob();
+                    try {
+                        const zip = await JSZip.loadAsync(fileDataBlob);
+
+                        const files = await Promise.all(
+                            Object.keys(zip.files).map(async (fileName) => {
+                                const blob = await zip.files[fileName].async("blob");
+                                return new File([blob], fileName);
+                            })
+                        )
+                        handleFiles(files);
+                    } catch (error) {
+                        console.error("Error processing zip file:", error);
+                    }
+                })();
+            }
+
+            const importButton = document.getElementById('importFromNanobaseButton');
+
+            // Attach the event listener within the module's scope
+            importButton.addEventListener('click', () => {
+                const inputElement = document.getElementById('importNanobase');
+                if (inputElement) {
+                    const url = new URL(inputElement.value);
+                    const structureId = url.pathname.split('/').pop();
+                    readNanobaseFromURL(structureId);
+                } else {
+                    console.error("Input element with ID 'importNanobase' not found.");
+                }
+            });
+        </script>
+
         <script src="./dist/file_handling/script_reader.js"></script>
-        <script src="./dist/file_handling/tacoxdna_worker.js"></script>
         <script src="./dist/editing/editing.js"></script>
         <script src="./dist/editing/doUndo.js"></script>
         <script src="./dist/editing/dijkstra.js"></script>
@@ -1417,6 +1489,7 @@
         <script src="./dist/UI/keybindings.js"></script>
         <script src="./dist/file_handling/output_file.js"></script>
         <script src="./dist/file_handling/pdb_lib.js"></script>
+        <script src="./dist/file_handling/mmcif_lib.js"></script>
         <script src="./dist/file_handling/UNF_reader.js"></script>
         <script src="./dist/file_handling/xyz_reader.js"></script>
         <script src="./dist/file_handling/video.js"></script>
@@ -1445,7 +1518,7 @@
         <script type="module" src="./dist/utils/historyStorageService.js"></script>
         <script type="module" src="./dist/utils/sharedStructureService.js"></script>
         <script type="module" src="./dist/file_handling/temp_storage.js"></script>
-
+        <script src="./dist/file_handling/taco.js"></script>
         <script>
             //https://stackoverflow.com/questions/326069/how-to-identify-if-a-webpage-is-being-loaded-inside-an-iframe-or-directly-into-t
             function inIframe () {

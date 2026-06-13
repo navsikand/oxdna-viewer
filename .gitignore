@@ -95,3 +95,6 @@ typings/
 out/
 
 # dist/dash/
+
+# Mac Double
+._*
