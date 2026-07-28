@@ -1,6 +1,8 @@
 /// <reference path="../typescript_definitions/oxView.d.ts" />
 /// <reference path="../typescript_definitions/index.d.ts" />
 
+import { decryptCommitData } from "./encryption";
+
 // This script is loaded when the commit history modal is opened.
 console.log("commitHistoryWindow-script.ts: Script loaded.");
 
@@ -297,13 +299,29 @@ async function generateShareInfo(structureId: string, commit: Commit) {
             throw new Error("Structure not found");
         }
 
-        if (commit.isEncrypted || !commit.data || commit.data.byteLength === 0) {
-            alert("This commit is encrypted or locked. Open it in oxView after signing in, then share the decrypted commit.");
-            throw new Error("Cannot share encrypted or locked commit data from commit history");
+        let dataToShare = commit.data;
+
+        if (commit.isEncrypted && commit.encryptedData && commit.iv) {
+            try {
+                const decrypted = await decryptCommitData(commit.encryptedData, commit.iv);
+                if (!decrypted) {
+                    alert('Your encryption key has expired. Please log in again to share this commit.');
+                    throw new Error('Encryption key expired or missing');
+                }
+                dataToShare = decrypted;
+            } catch (decryptError) {
+                console.error('Failed to decrypt commit for sharing:', decryptError);
+                alert('Failed to decrypt this commit for sharing. Please log in again.');
+                throw decryptError;
+            }
         }
 
-        // Convert ArrayBuffer to base64 string
-        const uint8Array = new Uint8Array(commit.data);
+        if (!dataToShare || dataToShare.byteLength === 0) {
+            alert('This commit has no data available to share.');
+            throw new Error('Commit data not available for sharing');
+        }
+
+        const uint8Array = new Uint8Array(dataToShare);
         const binaryString = Array.from(uint8Array, byte => String.fromCharCode(byte)).join('');
         const base64Data = btoa(binaryString);
 
@@ -318,7 +336,7 @@ async function generateShareInfo(structureId: string, commit: Commit) {
         };
 
         // Use the new shareCommit API function
-        const result = await shareCommit(requestBody);
+        const result = await (window as any).shareCommit(requestBody);
 
         if (!result) {
             throw new Error("Failed to share commit");

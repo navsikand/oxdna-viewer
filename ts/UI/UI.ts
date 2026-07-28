@@ -788,7 +788,7 @@ class View {
 
         this.toggleWindow(windowId, (id) => {
             console.log("commitHistoryWindow created for structureId:", id);
-            window.initCommitHistory(structureId)
+            (window as any).initCommitHistory(structureId)
         }, structureId);
     }
 

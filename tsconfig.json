@@ -67,6 +67,7 @@
     "./ts/file_handling/plateDB.ts",
     "./ts/editing/selections.ts",
     "./ts/api/plugin_api.ts",
+    "./ts/utils/encryption.ts",
     "./ts/utils/historyStorageService.ts",
     "./ts/utils/commitHistoryWindow-script.ts",
     "./ts/utils/submitStructureWindow-script.ts",
