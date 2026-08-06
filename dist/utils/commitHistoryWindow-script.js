@@ -1,6 +1,5 @@
 /// <reference path="../typescript_definitions/oxView.d.ts" />
 /// <reference path="../typescript_definitions/index.d.ts" />
-import { decryptCommitData } from "./encryption";
 // This script is loaded when the commit history modal is opened.
 console.log("commitHistoryWindow-script.ts: Script loaded.");
 async function initCommitHistory(structureId) {
@@ -247,7 +246,7 @@ async function generateShareInfo(structureId, commit) {
         let dataToShare = commit.data;
         if (commit.isEncrypted && commit.encryptedData && commit.iv) {
             try {
-                const decrypted = await decryptCommitData(commit.encryptedData, commit.iv);
+                const decrypted = await window.decryptCommitData(commit.encryptedData, commit.iv);
                 if (!decrypted) {
                     alert('Your encryption key has expired. Please log in again to share this commit.');
                     throw new Error('Encryption key expired or missing');

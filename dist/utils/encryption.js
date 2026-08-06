@@ -7,7 +7,7 @@
  * Reads the AES-GCM encryption key from localStorage.enc_key_data.
  * Returns null if missing or expired (24-hour TTL).
  */
-export function getStoredEncryptionKey() {
+function getStoredEncryptionKey() {
     try {
         const stored = localStorage.getItem('enc_key_data');
         if (!stored)
@@ -27,7 +27,7 @@ export function getStoredEncryptionKey() {
 /**
  * Imports a base64-encoded AES-256-GCM key into a CryptoKey for decryption.
  */
-export async function importAesKey(keyBase64) {
+async function importAesKey(keyBase64) {
     const keyBuffer = Uint8Array.from(atob(keyBase64), c => c.charCodeAt(0));
     return crypto.subtle.importKey('raw', keyBuffer, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
 }
@@ -35,10 +35,13 @@ export async function importAesKey(keyBase64) {
  * Decrypts an encrypted commit's data using AES-GCM.
  * Returns the decrypted ArrayBuffer, or null if key is missing/expired.
  */
-export async function decryptCommitData(encryptedData, iv) {
+async function decryptCommitData(encryptedData, iv) {
     const keyBase64 = getStoredEncryptionKey();
     if (!keyBase64)
         return null;
     const aesKey = await importAesKey(keyBase64);
     return crypto.subtle.decrypt({ name: 'AES-GCM', iv }, aesKey, encryptedData);
 }
+window.getStoredEncryptionKey = getStoredEncryptionKey;
+window.importAesKey = importAesKey;
+window.decryptCommitData = decryptCommitData;

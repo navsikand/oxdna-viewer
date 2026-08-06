@@ -1,7 +1,6 @@
 /// <reference path="../typescript_definitions/oxView.d.ts" />
 /// <reference path="../typescript_definitions/index.d.ts" />
 import { deflate, inflate } from "https://cdn.jsdelivr.net/npm/pako/+esm";
-import { getStoredEncryptionKey, importAesKey } from "./encryption";
 function getDashboardLoginPath() {
     return window.location.origin + "/dist/dash/login";
 }
@@ -330,7 +329,7 @@ async function loadStructure() {
                     console.log("loadStructure: User opted for temporary view of public project.");
                     // Decompress and load directly without persisting
                     const compData = new Uint8Array(commitDataBuffer);
-                    const uncompressed = inflate(compData, { to: "string" });
+                    const uncompressed = new TextDecoder().decode(inflate(compData));
                     const file = new File([uncompressed], "public.oxview", { type: "text/plain" });
                     view.inboxingMode.set("None");
                     view.centeringMode.set("None");
@@ -586,14 +585,14 @@ async function loadStructure() {
             if (commitToLoad.isEncrypted && commitToLoad.encryptedData && commitToLoad.iv) {
                 console.log("loadStructure: Commit is encrypted, decrypting on-the-fly...");
                 try {
-                    const keyBase64 = getStoredEncryptionKey();
+                    const keyBase64 = window.getStoredEncryptionKey();
                     if (!keyBase64) {
                         console.error("loadStructure: No valid encryption key - redirecting to login");
                         alert('Your encryption key has expired. Please log in again to access encrypted structures.');
                         window.location.href = getDashboardLoginPath();
                         return;
                     }
-                    const aesKey = await importAesKey(keyBase64);
+                    const aesKey = await window.importAesKey(keyBase64);
                     // Decrypt the data
                     const decryptedData = await crypto.subtle.decrypt({
                         name: 'AES-GCM',
@@ -603,7 +602,7 @@ async function loadStructure() {
                     if (!decryptedData || decryptedData.byteLength === 0) {
                         console.error("loadStructure: Decryption resulted in empty data");
                         if (typeof window.Metro !== 'undefined') {
-                            window.Metro.notify({
+                            window.Metro.notify.create({
                                 title: 'Decryption Failed',
                                 message: 'Failed to decrypt commit data',
                                 type: 'alert',
@@ -623,13 +622,13 @@ async function loadStructure() {
             }
             console.log("loadStructure: Decompressing data...");
             const compData = new Uint8Array(dataToDecompress);
-            const uncompressed = inflate(compData, { to: "string" });
+            const uncompressed = new TextDecoder().decode(inflate(compData));
             console.log("loadStructure: Data decompressed. Creating File object...");
             // Validate the decompressed data before creating file
             if (uncompressed === undefined || uncompressed === null || uncompressed === "") {
                 console.error("loadStructure: Decompressed data is invalid (undefined, null, or empty)");
                 if (typeof window.Metro !== 'undefined') {
-                    window.Metro.notify({
+                    window.Metro.notify.create({
                         title: 'Data Error',
                         message: 'Failed to load structure: Invalid data after decompression',
                         type: 'alert',
@@ -644,7 +643,7 @@ async function loadStructure() {
             catch (error) {
                 console.error("loadStructure: Decompressed data is not valid JSON:", error);
                 if (typeof window.Metro !== 'undefined') {
-                    window.Metro.notify({
+                    window.Metro.notify.create({
                         title: 'Data Error',
                         message: 'Failed to load structure: Data is not valid JSON format',
                         type: 'alert',
@@ -656,7 +655,7 @@ async function loadStructure() {
             if (typeof uncompressed !== 'string') {
                 console.error("loadStructure: Decompressed data is not a string:", typeof uncompressed);
                 if (typeof window.Metro !== 'undefined') {
-                    window.Metro.notify({
+                    window.Metro.notify.create({
                         title: 'Data Error',
                         message: 'Failed to load structure: Decompressed data is not in expected format',
                         type: 'alert',

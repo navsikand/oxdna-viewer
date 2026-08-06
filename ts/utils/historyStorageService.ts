@@ -2,7 +2,6 @@
 /// <reference path="../typescript_definitions/index.d.ts" />
 
 import { deflate, inflate } from "https://cdn.jsdelivr.net/npm/pako/+esm";
-import { getStoredEncryptionKey, importAesKey } from "./encryption";
 
 function getDashboardLoginPath(): string {
   return window.location.origin + "/dist/dash/login";
@@ -364,7 +363,7 @@ async function loadStructure(): Promise<void> {
           console.log("loadStructure: User opted for temporary view of public project.");
           // Decompress and load directly without persisting
           const compData = new Uint8Array(commitDataBuffer);
-          const uncompressed = inflate(compData, { to: "string" });
+          const uncompressed = new TextDecoder().decode(inflate(compData));
           const file = new File([uncompressed], "public.oxview", { type: "text/plain" });
           view.inboxingMode.set("None");
           view.centeringMode.set("None");
@@ -631,7 +630,7 @@ async function loadStructure(): Promise<void> {
         console.log("loadStructure: Commit is encrypted, decrypting on-the-fly...");
 
         try {
-          const keyBase64 = getStoredEncryptionKey();
+          const keyBase64 = (window as any).getStoredEncryptionKey();
 
           if (!keyBase64) {
             console.error("loadStructure: No valid encryption key - redirecting to login");
@@ -640,7 +639,7 @@ async function loadStructure(): Promise<void> {
             return;
           }
 
-          const aesKey = await importAesKey(keyBase64);
+          const aesKey = await (window as any).importAesKey(keyBase64);
 
           // Decrypt the data
           const decryptedData = await crypto.subtle.decrypt(
@@ -656,7 +655,7 @@ async function loadStructure(): Promise<void> {
           if (!decryptedData || decryptedData.byteLength === 0) {
             console.error("loadStructure: Decryption resulted in empty data");
             if (typeof (window as any).Metro !== 'undefined') {
-              (window as any).Metro.notify({
+              (window as any).Metro.notify.create({
                 title: 'Decryption Failed',
                 message: 'Failed to decrypt commit data',
                 type: 'alert',
@@ -678,14 +677,14 @@ async function loadStructure(): Promise<void> {
 
       console.log("loadStructure: Decompressing data...");
       const compData = new Uint8Array(dataToDecompress);
-      const uncompressed = inflate(compData, { to: "string" });
+      const uncompressed = new TextDecoder().decode(inflate(compData));
       console.log("loadStructure: Data decompressed. Creating File object...");
 
       // Validate the decompressed data before creating file
       if (uncompressed === undefined || uncompressed === null || uncompressed === "") {
         console.error("loadStructure: Decompressed data is invalid (undefined, null, or empty)");
         if (typeof (window as any).Metro !== 'undefined') {
-          (window as any).Metro.notify({
+          (window as any).Metro.notify.create({
             title: 'Data Error',
             message: 'Failed to load structure: Invalid data after decompression',
             type: 'alert',
@@ -700,7 +699,7 @@ async function loadStructure(): Promise<void> {
       } catch (error) {
         console.error("loadStructure: Decompressed data is not valid JSON:", error);
         if (typeof (window as any).Metro !== 'undefined') {
-          (window as any).Metro.notify({
+          (window as any).Metro.notify.create({
             title: 'Data Error',
             message: 'Failed to load structure: Data is not valid JSON format',
             type: 'alert',
@@ -713,7 +712,7 @@ async function loadStructure(): Promise<void> {
       if (typeof uncompressed !== 'string') {
         console.error("loadStructure: Decompressed data is not a string:", typeof uncompressed);
         if (typeof (window as any).Metro !== 'undefined') {
-          (window as any).Metro.notify({
+          (window as any).Metro.notify.create({
             title: 'Data Error',
             message: 'Failed to load structure: Decompressed data is not in expected format',
             type: 'alert',
