@@ -1,6 +1,7 @@
 /// <reference path="../typescript_definitions/oxView.d.ts" />
 /// <reference path="../typescript_definitions/index.d.ts" />
 import { deflate, inflate } from "https://cdn.jsdelivr.net/npm/pako/+esm";
+import { getStoredEncryptionKey, importAesKey } from "./encryption";
 function getDashboardLoginPath() {
     return window.location.origin + "/dist/dash/login";
 }
@@ -585,35 +586,14 @@ async function loadStructure() {
             if (commitToLoad.isEncrypted && commitToLoad.encryptedData && commitToLoad.iv) {
                 console.log("loadStructure: Commit is encrypted, decrypting on-the-fly...");
                 try {
-                    // Get key from localStorage (with expiration check)
-                    const getStoredKey = () => {
-                        try {
-                            const stored = localStorage.getItem('enc_key_data');
-                            if (!stored)
-                                return null;
-                            const data = JSON.parse(stored);
-                            // Check expiration (24 hours)
-                            if (Date.now() >= data.expiresAt) {
-                                console.warn('Encryption key expired');
-                                localStorage.removeItem('enc_key_data');
-                                return null;
-                            }
-                            return data.key;
-                        }
-                        catch {
-                            return null;
-                        }
-                    };
-                    const keyBase64 = getStoredKey();
+                    const keyBase64 = getStoredEncryptionKey();
                     if (!keyBase64) {
                         console.error("loadStructure: No valid encryption key - redirecting to login");
                         alert('Your encryption key has expired. Please log in again to access encrypted structures.');
                         window.location.href = getDashboardLoginPath();
                         return;
                     }
-                    // Convert base64 key to CryptoKey
-                    const keyBuffer = Uint8Array.from(atob(keyBase64), c => c.charCodeAt(0));
-                    const aesKey = await crypto.subtle.importKey('raw', keyBuffer, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+                    const aesKey = await importAesKey(keyBase64);
                     // Decrypt the data
                     const decryptedData = await crypto.subtle.decrypt({
                         name: 'AES-GCM',
