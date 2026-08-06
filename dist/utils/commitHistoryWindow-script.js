@@ -51,6 +51,12 @@ async function initCommitHistory(structureId) {
     commitsSorted.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
     const currentBranchName = urlParams.get('branch') || structure.currentBranchName || structure.defaultBranchName || 'main';
     console.log(`initCommitHistory: Current branch name is '${currentBranchName}'`);
+    // Determine which commit is currently loaded/viewed in the main oxView window.
+    // The main page URL carries ?commit=<id> whenever a specific commit is loaded;
+    // otherwise fall back to the structure's persisted currentCommitId (the head
+    // the user is currently working on).
+    const currentViewedCommitId = urlParams.get('commit') || structure.currentCommitId || null;
+    console.log(`initCommitHistory: Currently viewed commit is '${currentViewedCommitId}'`);
     // Create a map for quick commit lookup and to store children
     const commitMap = new Map();
     console.log("initCommitHistory: Building commit map...");
@@ -166,6 +172,13 @@ async function initCommitHistory(structureId) {
         .share-link:hover {
             text-decoration: underline;
         }
+        .current-commit-badge {
+            color: #888;
+            font-size: 0.75em;
+            font-style: italic;
+            margin-left: 8px;
+            white-space: nowrap;
+        }
     `;
     commitGraphElement.appendChild(style);
     function renderTree(nodes, container) {
@@ -190,6 +203,14 @@ async function initCommitHistory(structureId) {
             commitLink.textContent = node.commit.commitName;
             commitLink.title = `Commit ID: ${node.commit.commitId}`;
             detailsDiv.appendChild(commitLink);
+            // Mark the commit currently loaded/viewed in oxView.
+            if (node.commit.commitId === currentViewedCommitId) {
+                const currentBadge = document.createElement('span');
+                currentBadge.classList.add('current-commit-badge');
+                currentBadge.textContent = 'viewing';
+                currentBadge.title = 'This commit is currently loaded in the viewer';
+                detailsDiv.appendChild(currentBadge);
+            }
             if (branchHeads.has(node.commit.commitId)) {
                 const branchName = branchHeads.get(node.commit.commitId);
                 const branchLabel = document.createElement('span');
