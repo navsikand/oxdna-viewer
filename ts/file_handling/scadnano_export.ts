@@ -21,6 +21,7 @@ interface Window {
     hideScadnanoGridPane?: () => void;
     scadnanoDialogExport?: () => void;
     toggleGridDropdown?: (checkboxElement: HTMLInputElement) => void;
+    toggleClusterModeDropdown?: (checkboxElement: HTMLInputElement) => void;
     scadnanoSelectHelixFromNucleotide?: (nucleotideInput?: unknown, additive?: boolean) => void;
     scadnanoGetHelices?: () => Nucleotide[][] | null;
     scadnanoCombineSelectedHelices?: () => void;
@@ -56,6 +57,7 @@ namespace scadnanoExport {
         lattice: ScadnanoRequestedGridType,
         wireframe: boolean,
         cluster: boolean,
+        clusterMode: 'angular' | 'spatial' = 'angular',
         pins: toscad.RelativePin[] = []
     ): ScadnanoLayout {
         const nucleotides = nucleotideMap();
@@ -64,6 +66,7 @@ namespace scadnanoExport {
             lattice,
             wireframe,
             cluster,
+            clusterMode,
             pins
         });
 
@@ -121,7 +124,8 @@ namespace scadnanoExport {
             lattice: requestedGridType(input('scadnanoGrid')?.value),
             includeHelixPos: Boolean(input('scadnanoIncludeHPos')?.checked),
             wireframe: Boolean(input('scadnanoWireframe')?.checked),
-            cluster: Boolean(input('scadnanoCluster')?.checked)
+            cluster: Boolean(input('scadnanoCluster')?.checked),
+            clusterMode: (input('scadnanoClusterMode')?.value === 'spatial' ? 'spatial' : 'angular') as 'angular' | 'spatial'
         };
     }
 
@@ -151,7 +155,7 @@ namespace scadnanoExport {
     // Ribbon dialog "Export". Without helix positions it writes the file directly;
     // with them it opens the grid pane on the pipeline's layout instead.
     export function handleDialogExport(): void {
-        const { name, lattice, includeHelixPos, wireframe, cluster } = dialogOptions();
+        const { name, lattice, includeHelixPos, wireframe, cluster, clusterMode } = dialogOptions();
         closeDialog();
 
         requestAnimationFrame(() => requestAnimationFrame(() => {
@@ -159,7 +163,7 @@ namespace scadnanoExport {
             longCalculation(
                 () => {
                     try {
-                        result = runPipeline(lattice, wireframe, cluster);
+                        result = runPipeline(lattice, wireframe, cluster, clusterMode);
                         if (!includeHelixPos) writeScadnanoFile(name, result);
                     } catch (err) {
                         result = null;
@@ -184,9 +188,9 @@ namespace scadnanoExport {
             return;
         }
 
-        const { name, lattice, wireframe, cluster } = dialogOptions();
+        const { name, lattice, wireframe, cluster, clusterMode } = dialogOptions();
         try {
-            writeScadnanoFile(name, layout ?? runPipeline(lattice, wireframe, cluster), helixPos);
+            writeScadnanoFile(name, layout ?? runPipeline(lattice, wireframe, cluster, clusterMode), helixPos);
         } catch (err) {
             notify(`Scadnano export failed: ${err}`, 'alert');
         }
@@ -194,6 +198,11 @@ namespace scadnanoExport {
 
     export function toggleGridDropdown(checkboxElement: HTMLInputElement): void {
         const dropdown = document.getElementById('scadnanoGrid') as HTMLSelectElement | null;
+        if (dropdown) dropdown.disabled = !checkboxElement.checked;
+    }
+
+    export function toggleClusterModeDropdown(checkboxElement: HTMLInputElement): void {
+        const dropdown = document.getElementById('scadnanoClusterMode') as HTMLSelectElement | null;
         if (dropdown) dropdown.disabled = !checkboxElement.checked;
     }
 
@@ -808,6 +817,7 @@ namespace scadnanoExport {
 
     window.scadnanoDialogExport = handleDialogExport;
     window.toggleGridDropdown = toggleGridDropdown;
+    window.toggleClusterModeDropdown = toggleClusterModeDropdown;
     window.exportScadnanoFromGridView = exportFromGridView;
     window.showScadnanoGridFromHelixPos = showGrid;
     window.hideScadnanoGridPane = hideGrid;
@@ -829,6 +839,10 @@ function scadnanoDialogExport(): void {
 
 function toggleGridDropdown(checkboxElement: HTMLInputElement): void {
     scadnanoExport.toggleGridDropdown(checkboxElement);
+}
+
+function toggleClusterModeDropdown(checkboxElement: HTMLInputElement): void {
+    scadnanoExport.toggleClusterModeDropdown(checkboxElement);
 }
 
 function scadnanoFocusOnHelixToggle(checkboxElement: HTMLInputElement): void {

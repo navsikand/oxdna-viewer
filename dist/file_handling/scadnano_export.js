@@ -1,3 +1,4 @@
+"use strict";
 /// <reference path="../typescript_definitions/index.d.ts" />
 var scadnanoExport;
 (function (scadnanoExport) {
@@ -18,13 +19,14 @@ var scadnanoExport;
         return out;
     }
     // The one call sign. Everything else in this file consumes its output.
-    function runPipeline(lattice, wireframe, cluster, pins = []) {
+    function runPipeline(lattice, wireframe, cluster, clusterMode = 'angular', pins = []) {
         const nucleotides = nucleotideMap();
         layout = toscad.layoutPipeline(nucleotides, {
             tolerance: TOLERANCE,
             lattice,
             wireframe,
             cluster,
+            clusterMode,
             pins
         });
         const mapped = layout.helices.flat().length;
@@ -76,7 +78,8 @@ var scadnanoExport;
             lattice: requestedGridType(input('scadnanoGrid')?.value),
             includeHelixPos: Boolean(input('scadnanoIncludeHPos')?.checked),
             wireframe: Boolean(input('scadnanoWireframe')?.checked),
-            cluster: Boolean(input('scadnanoCluster')?.checked)
+            cluster: Boolean(input('scadnanoCluster')?.checked),
+            clusterMode: (input('scadnanoClusterMode')?.value === 'spatial' ? 'spatial' : 'angular')
         };
     }
     function longCalculation(calc, done) {
@@ -104,13 +107,13 @@ var scadnanoExport;
     // Ribbon dialog "Export". Without helix positions it writes the file directly;
     // with them it opens the grid pane on the pipeline's layout instead.
     function handleDialogExport() {
-        const { name, lattice, includeHelixPos, wireframe, cluster } = dialogOptions();
+        const { name, lattice, includeHelixPos, wireframe, cluster, clusterMode } = dialogOptions();
         closeDialog();
         requestAnimationFrame(() => requestAnimationFrame(() => {
             let result = null;
             longCalculation(() => {
                 try {
-                    result = runPipeline(lattice, wireframe, cluster);
+                    result = runPipeline(lattice, wireframe, cluster, clusterMode);
                     if (!includeHelixPos)
                         writeScadnanoFile(name, result);
                 }
@@ -135,9 +138,9 @@ var scadnanoExport;
             notify('No edited helix positions available to export.', 'warning');
             return;
         }
-        const { name, lattice, wireframe, cluster } = dialogOptions();
+        const { name, lattice, wireframe, cluster, clusterMode } = dialogOptions();
         try {
-            writeScadnanoFile(name, layout ?? runPipeline(lattice, wireframe, cluster), helixPos);
+            writeScadnanoFile(name, layout ?? runPipeline(lattice, wireframe, cluster, clusterMode), helixPos);
         }
         catch (err) {
             notify(`Scadnano export failed: ${err}`, 'alert');
@@ -150,6 +153,12 @@ var scadnanoExport;
             dropdown.disabled = !checkboxElement.checked;
     }
     scadnanoExport.toggleGridDropdown = toggleGridDropdown;
+    function toggleClusterModeDropdown(checkboxElement) {
+        const dropdown = document.getElementById('scadnanoClusterMode');
+        if (dropdown)
+            dropdown.disabled = !checkboxElement.checked;
+    }
+    scadnanoExport.toggleClusterModeDropdown = toggleClusterModeDropdown;
     // ── grid pane ────────────────────────────────────────────────────────────
     function toHelixPosMap(value) {
         if (!value)
@@ -741,6 +750,7 @@ var scadnanoExport;
     initPaneControls();
     window.scadnanoDialogExport = handleDialogExport;
     window.toggleGridDropdown = toggleGridDropdown;
+    window.toggleClusterModeDropdown = toggleClusterModeDropdown;
     window.exportScadnanoFromGridView = exportFromGridView;
     window.showScadnanoGridFromHelixPos = showGrid;
     window.hideScadnanoGridPane = hideGrid;
@@ -758,6 +768,9 @@ function scadnanoDialogExport() {
 }
 function toggleGridDropdown(checkboxElement) {
     scadnanoExport.toggleGridDropdown(checkboxElement);
+}
+function toggleClusterModeDropdown(checkboxElement) {
+    scadnanoExport.toggleClusterModeDropdown(checkboxElement);
 }
 function scadnanoFocusOnHelixToggle(checkboxElement) {
     scadnanoExport.focusOnHelixToggle(Boolean(checkboxElement?.checked));
