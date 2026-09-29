@@ -1,3 +1,4 @@
+"use strict";
 /// <reference path="../typescript_definitions/index.d.ts" />
 let mouse3D;
 let raycaster = new THREE.Raycaster();
@@ -46,6 +47,8 @@ canvas.addEventListener('mousedown', event => {
             // but it needs to be defined as a callback since the cluster selection
             // can take a while to finish.
             let nucleotide = elements.get(id);
+            const additiveSelect = event.ctrlKey || event.metaKey || event.shiftKey;
+            window.scadnanoSelectHelixFromNucleotide?.(nucleotide, additiveSelect);
             let sys = nucleotide.getSystem();
             let selecting = selectedBases.has(nucleotide) ? false : true;
             // Select multiple elements my holding down ctrl/command
@@ -114,6 +117,19 @@ canvas.addEventListener('mousedown', event => {
                     }));
                     updateView(sys);
                     break;
+                case "Helix": {
+                    const helices = window.scadnanoGetHelices?.();
+                    const helixId = helices ? api.helix.findHelixID(nucleotide.id, helices) : null;
+                    if (helixId !== null && helices) {
+                        const helixIds = new Set(helices[helixId].map(n => n.id));
+                        sys.strands.forEach(strand => strand.forEach(e => {
+                            if (helixIds.has(e.id))
+                                e.toggle();
+                        }));
+                        updateView(sys);
+                    }
+                    break;
+                }
             }
             if (tmpSystems.length !== 0) {
                 tmpSystems.forEach((sys) => {
@@ -546,23 +562,49 @@ document.addEventListener('keydown', function (event) {
     if (target && target.tagName === 'INPUT') {
         return;
     }
-    if (event.code === "Digit1") {
-        changeSelectionMode('Monomer');
+    const gridOpen = document.body.classList.contains('scadnano-grid-open');
+    if (gridOpen) {
+        if (event.code === "Digit1") {
+            changeSelectionMode('Monomer');
+        }
+        else if (event.code === "Digit2") {
+            changeSelectionMode('Strand');
+        }
+        else if (event.code === "Digit3") {
+            changeSelectionMode('Helix');
+        }
+        else if (event.code === "Digit4") {
+            changeSelectionMode('System');
+        }
+        else if (event.code === "Digit5") {
+            changeSelectionMode('Cluster');
+        }
+        else if (event.code === "Digit6") {
+            changeSelectionMode('Box');
+        }
+        else if (event.code === "Digit7") {
+            document.getElementById('selectPairs').classList.toggle('active');
+        }
     }
-    else if (event.code === "Digit2") {
-        changeSelectionMode('Strand');
-    }
-    else if (event.code === "Digit3") {
-        changeSelectionMode('System');
-    }
-    else if (event.code === "Digit4") {
-        changeSelectionMode('Cluster');
-    }
-    else if (event.code === "Digit5") {
-        changeSelectionMode('Box');
-    }
-    else if (event.code === "Digit6") {
-        document.getElementById('selectPairs').classList.toggle('active');
+    else {
+        if (event.code === "Digit1") {
+            changeSelectionMode('Monomer');
+        }
+        else if (event.code === "Digit2") {
+            changeSelectionMode('Strand');
+        }
+        else if (event.code === "Digit3") {
+            changeSelectionMode('System');
+        }
+        else if (event.code === "Digit4") {
+            changeSelectionMode('Cluster');
+        }
+        else if (event.code === "Digit5") {
+            changeSelectionMode('Box');
+        }
+        else if (event.code === "Digit6") {
+            document.getElementById('selectPairs').classList.toggle('active');
+        }
     }
 });
 function colorSelectorWrapper() {

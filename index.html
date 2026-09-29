@@ -161,6 +161,54 @@
             <button onclick="readPDBFromId(document.getElementById('importPDBID').value)" class="button primary js-dialog-close">Import</button>
         </div>
     </div>
+
+        <div id='scadnanoDialog' class="dialog" data-role="dialog">
+        <div class="dialog-title">Scadnano Export</div>
+        <div class="dialog-content">
+            <label>File name:</label>
+            <input type="text" id="scadnanoFilename" value="output" data-role="input">
+            <hr>
+            
+            <label style="display: flex; align-items: center; cursor: pointer;">
+                <input type="checkbox" id="scadnanoIncludeHPos" checked onchange="toggleGridDropdown(this)"> 
+                <span style="margin-left: 8px;">Calculate Helix Positions</span>
+            </label>
+
+            <label style="display: flex; align-items: center; cursor: pointer; margin-top: 8px;">
+                <input type="checkbox" id="scadnanoWireframe">
+                <span style="margin-left: 8px;">Wireframe export (skip angle combine)</span>
+            </label>
+
+            <label style="display: flex; align-items: center; cursor: pointer; margin-top: 8px;">
+                <input type="checkbox" id="scadnanoCluster" checked onchange="toggleClusterModeDropdown(this)">
+                <span style="margin-left: 8px;">Cluster helices</span>
+            </label>
+
+            <div style="margin-left: 24px; margin-top: 8px;">
+                <label for="scadnanoClusterMode" style="display:block; margin-bottom:6px;">Cluster method</label>
+                <select id="scadnanoClusterMode">
+                    <option value="angular" selected>Angular (by axis orientation)</option>
+                    <option value="spatial">Spatial (by crossover connectivity)</option>
+                </select>
+            </div>
+
+            <div style="margin-left: 24px; margin-top: 8px;">
+                <label for="scadnanoGrid" style="display:block; margin-bottom:6px;">Grid type</label>
+                <select id="scadnanoGrid">
+                    <option value="automatic" selected>Automatic</option>
+                    <option value="honeycomb">Honeycomb</option>
+                    <option value="square">Square</option>
+                </select>
+            </div>
+        </div>
+        
+        <div class="dialog-actions">
+            <button class="button js-dialog-close">Cancel</button>
+            <button class="button primary" onclick="scadnanoDialogExport()">
+                Export
+            </button>
+        </div>
+    </div>
     
     <div id='importNanobaseDialog' class="dialog" data-role="dialog">
         <h2>Import Nanobase</h2>
@@ -413,6 +461,10 @@
                     <!-- <span class="mif-file-download mif-2x"></span> -->
                     <img src="./img/ico/oxdna_logo.png" height="30px" >
                     <span class="caption">oxDNA</span>
+                </button>
+                <button class="ribbon-button" onclick="Metro.dialog.open('#scadnanoDialog')" title="Download the current scene as a Scadnano file.">
+                    <img src="./img/ico/scadnano_logo.svg" height="30px">
+                    <span class="caption">Scadnano</span>
                 </button>
                 <span class="title mif-floppy-disk mif-3x"> <b>Save</b></span>
                 </div>
@@ -1284,6 +1336,12 @@
                     <span class="mif-flow-line"></span>
                 </span>
             </button>
+            <button class="button cycle gridview-only" title="Helix" id="helixModeBtn" onclick="changeSelectionMode('Helix')">
+                <span class="icon">
+                    <span class="mif-tab"></span>
+                </span>
+            </button>
+
             <button class="button cycle" title="System" onclick="changeSelectionMode('System')">
                 <span class="icon">
                     <span class="mif-flow-tree"></span>
@@ -1362,6 +1420,78 @@
 
     <div hidden=true id="hoverInfo">Description</div>
 
+        <!--Scadnano grid pane-->
+        <div id="scadnanoGridPane">
+        <nav id="scadnanoGridToolbar" class="ribbon-menu" aria-label="Grid view toolbar">
+            <ul class="tabs-holder">
+                <li class="tab-undo-redo">
+                    <div id="scadnanoGridUndoRedoGroup" role="group" aria-label="History">
+                        <button id="scadnanoGridUndoBtn" type="button" title="Undo last edit (cmd/ctrl+z)" aria-label="Undo" disabled>
+                            <span class="mif-undo" aria-hidden="true"></span>
+                        </button>
+                        <button id="scadnanoGridRedoBtn" type="button" title="Redo (cmd/ctrl+shift+z)" aria-label="Redo" disabled>
+                            <span class="mif-redo" aria-hidden="true"></span>
+                        </button>
+                    </div>
+                </li>
+                <li class="tab-section active" data-section="edit">
+                    <button type="button" title="Edit">Edit</button>
+                </li>
+                <li class="tab-section" data-section="export">
+                    <button type="button" title="Export">Export</button>
+                </li>
+                <li class="tab-close">
+                    <button id="scdgridClose" type="button" title="Close grid" aria-label="Close grid">&times;</button>
+                </li>
+            </ul>
+            <div class="content-holder">
+                <div class="section active" id="scadnano-section-edit" data-section="edit">
+                    <div class="group">
+                        <button id="scadnanoGridLockHelicesBtn" class="ribbon-button" type="button" title="Toggle lock/unlock on selected helices">
+                            <span class="mif-lock mif-2x" aria-hidden="true"></span>
+                        </button>
+                        <span class="title">Lock/Unlock Helices</span>
+                    </div>
+                    <div class="group">
+                        <input type="checkbox" id="scadnanoGridSplitHelicesToggle" onchange="scadnanoFocusOnHelixToggle(this)" data-role="switch" data-caption="Focus on helix" title="Focus on selected helix (toggle to restore view)">
+                        <button id="scadnanoGridSplitFromSelectedBtn" class="ribbon-button" type="button" title="Split from selected" disabled>
+                            <span class="mif-flow-tree mif-2x" aria-hidden="true"></span>
+                            <span class="caption">Split from selected</span>
+                        </button>
+                        <span class="title">Split helices</span>
+                    </div>
+                    <div class="group">
+                        <button id="scadnanoGridCombineBtn" class="ribbon-button" type="button" title="Combine the selected helices into the lowest-numbered one">
+                            <img src="img/ico/combine.svg" class="ribbon-icon" alt="" aria-hidden="true">
+                        </button>
+                        <span class="title">Combine</span>
+                    </div>
+                    <div class="group">
+                        <button id="scadnanoGridRecalcBtn" class="ribbon-button" type="button" title="Recalculate grid">
+                            <span class="mif-calculator mif-2x" aria-hidden="true"></span>
+                        </button>
+                        <span class="title">Recalculate Grid</span>
+                    </div>
+                </div>
+                <div class="section" id="scadnano-section-export" data-section="export">
+                    <div class="group">
+                        <button id="scadnanoGridExportBtn" class="ribbon-button" type="button" title="Export the current scadnano layout">
+                            <span class="mif-file-download mif-2x" aria-hidden="true"></span>
+                            <span class="caption">Export as scadnano</span>
+                        </button>
+                        <button id="scadnanoGridExportHelicesBtn" class="ribbon-button" type="button" title="Export the current helices as a JSON file (no grid positions)">
+                            <img src="img/ico/brackets.svg" height="30px" alt="" aria-hidden="true">
+                            <span class="caption">Export helices as JSON</span>
+                        </button>
+                        <span class="title">Export</span>
+                    </div>
+                </div>
+            </div>
+        </nav>
+        <canvas id="scadnanoGridCanvas"></canvas>
+        <div id="scadnanoGridResizeHandle" title="Drag to resize"></div>
+    </div>
+
     <!--Canvas-->
     <div id="container">
         <div><canvas id="colorbarCanvas"></canvas></div>
@@ -1395,6 +1525,15 @@
         <script src="./dist/file_handling/aux_readers.js"></script>
         <script src="./dist/file_handling/script_reader.js"></script>
         <script src="./dist/file_handling/tacoxdna_worker.js"></script>
+        <script src="./dist/helix/dsdnahelix.js"></script>
+        <script src="./dist/helix/scadnano_gridview.js"></script>
+        <script src="./dist/file_handling/scadnano_export.js"></script>
+        <script src="./dist/helix/conversion.js"></script>
+        <script src="./dist/helix/kruskals.js"></script>
+        <script src="./dist/helix/gridpos.js"></script>
+        <script src="./dist/helix/helix_cluster.js"></script>
+        <script src="./dist/helix/trials.js"></script>
+        <script src="./dist/helix/ssrna.js"></script>
         <script src="./dist/editing/editing.js"></script>
         <script src="./dist/editing/doUndo.js"></script>
         <script src="./dist/editing/dijkstra.js"></script>
@@ -1419,12 +1558,14 @@
         <script src="./dist/file_handling/pdb_lib.js"></script>
         <script src="./dist/file_handling/UNF_reader.js"></script>
         <script src="./dist/file_handling/xyz_reader.js"></script>
+        <script src="./dist/file_handling/scadnano_reader.js"></script>
         <script src="./dist/file_handling/video.js"></script>
         <script src="./dist/editing/translation.js"></script>
         <script src="./ts/controls/SceneUtils.js"></script>
         <script src="./dist/api/scene_api.js"></script>
         <script src="./dist/api/editing_api.js"></script>
         <script src="./dist/api/observable_api.js"></script>
+        <script src="./dist/api/helper.js"></script>
         <script src="./dist/editing/clustering.js"></script>
         <script src="./dist/file_handling/stl_exporter.js"></script>
         <script src="./dist/file_handling/GLTFExporter.js"></script>
