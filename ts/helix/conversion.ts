@@ -1197,7 +1197,7 @@ namespace toscad {
 
         // Optional spatial renumbering of the output helix numbering (ids/callsigns untouched).
         if (renumber) {
-            const { remap } = renumberHelicesGNN(grid, helixPos, latticeType, currentBinders);
+            const { remap } = renumberHelices(grid, helixPos, latticeType, currentBinders);
             ({ helices, helixPos } = applyHelixRenumber(helices, grid, helixPos, remap));
 
             // Helix ids changed, so re-derive angles and re-run kruskals + posCorr5 to settle into stable state.

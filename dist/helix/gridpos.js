@@ -390,9 +390,6 @@ var toscad;
     }
     toscad.getAngles = getAngles;
     // Chebyshev-ring expanding search for the closest (col,row) cell not present in `occupied`.
-    // Rings d = 1, 2, 3, ... are traversed in a stable (dCol, dRow) order so the result is
-    // deterministic. Lattice-agnostic: the visual scadnano grid places one helix per cell
-    // regardless of honeycomb/square adjacency, so plain Chebyshev distance is sufficient.
     function findNearestOpenPos(anchor, occupied, maxRadius = 10000) {
         const keyOf = (c, r) => `${c},${r}`;
         const [ac, ar] = anchor;
@@ -417,25 +414,7 @@ var toscad;
         return [c, ar];
     }
     toscad.findNearestOpenPos = findNearestOpenPos;
-    // Splits `helixId` into two helices along the boundary defined by `nucleotides`:
-    //   - The nucleotides passed in are moved into a brand-new helix appended to `helices[]`.
-    //   - The remaining nucleotides stay in the original helix (helixApos = original position).
-    //   - GridMap marks for the moved nucleotides get their `helixId` remapped to the new helix,
-    //     while their `offset` and `direction` are left untouched — so the physical layout of
-    //     every base (its column and strand direction) is preserved across the split.
-    //   - The new helix is placed in the visual grid at the closest available empty cell to
-    //     the original helix's position (Chebyshev-ring search via findNearestOpenPos).
-    //
-    // Returns the two positions plus references to the same (now mutated) helices, GridMap, and
-    // helixPos. Caller is expected to trigger downstream refreshes (editor node list, angle
-    // recalc, etc.) themselves.
-    //
-    // Returns null on invalid input:
-    //   - helixId out of range,
-    //   - no nucleotides passed,
-    //   - no helixPos entry for helixId,
-    //   - none of the supplied nucleotides actually belong to helixId,
-    //   - all of helixId's nucleotides are being moved (nothing left to keep).
+    // Function to split a helix into 2 helices.
     function splitHelix(grid, helixPos, helixId, helices, nucleotides) {
         if (helixId < 0 || helixId >= helices.length) {
             console.warn(`[splitHelix] helixId=${helixId} out of range (helices.length=${helices.length})`);
@@ -516,10 +495,7 @@ var toscad;
         };
     }
     toscad.splitHelix = splitHelix;
-    // ── Shared helper: collect all crossover shift observations ──────
-    // For each pair of helices connected by backbone crossovers, returns
-    // the list of observed shifts (offsetA - offsetB for each crossover
-    // from A→B). Used by both alignGridPrim and alignGridDP.
+    // Helper function used by alignGridPrim.
     function collectShiftObservations(grid) {
         const allNtIds = new Set();
         for (const [ntId] of grid.entries())
@@ -587,7 +563,6 @@ var toscad;
         }
         return { shifts, helixIds };
     }
-    toscad.collectShiftObservations = collectShiftObservations;
     // ── Helper: compute median of a sorted-or-unsorted number array ─
     function median(arr) {
         if (arr.length === 0)
@@ -598,77 +573,9 @@ var toscad;
             ? Math.round((sorted[mid - 1] + sorted[mid]) / 2)
             : sorted[mid];
     }
-    function buildCellIndex(grid) {
-        const idx = new Map();
-        for (const [, m] of grid.entries()) {
-            let hm = idx.get(m.helixId);
-            if (!hm) {
-                hm = new Map();
-                idx.set(m.helixId, hm);
-            }
-            const key = `${m.direction}|${m.offset}`;
-            if (!hm.has(key))
-                hm.set(key, new Set());
-            hm.get(key).add(m.helixId);
-        }
-        return idx;
-    }
-    // A cell is "free for selfHid" when nothing occupies it, or only marks of
-    // selfHid occupy it (a helix never conflicts with itself — its own marks
-    // are presumed internally consistent before any move).
-    function cellFree(idx, hid, selfHid, dir, off) {
-        const hm = idx.get(hid);
-        if (!hm)
-            return true;
-        const s = hm.get(`${dir}|${off}`);
-        if (!s)
-            return true;
-        if (selfHid === hid)
-            return true;
-        for (const other of s)
-            if (other !== selfHid)
-                return false;
-        return true;
-    }
-    // Would shifting every mark of helix hid by delta cause a collision?
-    function collidesAt(grid, idx, hid, delta) {
-        if (delta === 0)
-            return false;
-        for (const [, m] of grid.entries()) {
-            if (m.helixId !== hid)
-                continue;
-            if (!cellFree(idx, hid, hid, m.direction, m.offset + delta))
-                return true;
-        }
-        return false;
-    }
-    // Pick the best non-colliding delta for helix hid.
-    // Tries the ideal shift first, then walks outward ±1, ±2, … up to
-    // maxRadius (±1 keeps crossover parity so even ±2 crossovers still align).
-    // Returns null when no collision-free placement exists within the radius —
-    // the caller must then keep the helix's previous position (i.e. not move).
-    function pickCollisionFreeDelta(grid, hid, idealDelta, maxRadius = 24) {
-        const idx = buildCellIndex(grid);
-        if (!collidesAt(grid, idx, hid, idealDelta))
-            return idealDelta;
-        for (let radius = 1; radius <= maxRadius; radius++) {
-            for (const sign of [1, -1]) {
-                const cand = idealDelta + sign * radius;
-                if (!collidesAt(grid, idx, hid, cand))
-                    return cand;
-            }
-        }
-        return null;
-    }
-    // Apply a single helix's shift and then re-normalize all offsets so the
-    // global minimum sits at 0 (keeps offsets non-negative even when the
-    // minimum was produced by a rejected move's neighbors).
-    function applySingleShift(grid, hid, delta) {
-        if (delta === 0)
-            return;
-        for (const [, m] of grid.entries())
-            if (m.helixId === hid)
-                m.offset += delta;
+    // Shift all offsets so the global minimum sits at 0 (keeps offsets
+    // non-negative for downstream export). Called once, after all placement.
+    function normalizeOffsets(grid) {
         let globalMin = Infinity;
         for (const [, m] of grid.entries())
             if (m.offset < globalMin)
@@ -801,13 +708,9 @@ var toscad;
             }
         }
         // ── Apply shifts (non-binder helices) ─────────────────────────
-        // Sequential, overlap-aware placement: each helix is moved to the
-        // collision-free delta closest to its MST-ideal cumulative shift.
-        // Applying one helix at a time lets later helices see (and avoid)
-        // the cells occupied by earlier ones — including pseudo-helices of a
-        // split merged helix, which would otherwise fold back onto the same
-        // helixId with colliding offsets. A helix with no valid placement
-        // within the search radius keeps its previous position.
+        // Each helix is moved by its MST-ideal cumulative shift. Applied one
+        // at a time, largest shift first, then re-normalized so offsets stay
+        // non-negative.
         {
             const orderedHelices = structuralHelices
                 .filter(h => h !== mstRoot && (cumulativeShift.get(h) ?? 0) !== 0)
@@ -818,15 +721,11 @@ var toscad;
             });
             for (const hid of orderedHelices) {
                 const ideal = cumulativeShift.get(hid) ?? 0;
-                const delta = pickCollisionFreeDelta(grid, hid, ideal);
-                if (delta === null) {
-                    console.warn(`[alignGridPrim] No collision-free placement for helix ${hid} (ideal shift ${ideal}); keeping current position.`);
+                if (ideal === 0)
                     continue;
-                }
-                if (delta !== ideal) {
-                    console.log(`[alignGridPrim] Helix ${hid}: ideal shift ${ideal} would overlap; placed at ${delta} instead.`);
-                }
-                applySingleShift(grid, hid, delta);
+                for (const [, m] of grid.entries())
+                    if (m.helixId === hid)
+                        m.offset += ideal;
             }
         }
         // ── Binder correction: align each strand segment individually ───
@@ -928,17 +827,6 @@ var toscad;
                         }
                     }
                 }
-            }
-        }
-        // ── Final normalization ──────────────────────────────────────────
-        let globalMin2 = Infinity;
-        for (const [, mark] of grid.entries()) {
-            if (mark.offset < globalMin2)
-                globalMin2 = mark.offset;
-        }
-        if (globalMin2 !== 0 && globalMin2 !== Infinity) {
-            for (const [, mark] of grid.entries()) {
-                mark.offset -= globalMin2;
             }
         }
         // ── Binder post-pass (after alignGridPrim) ─────────────────────
@@ -1086,6 +974,8 @@ var toscad;
                     break;
             }
         }
+        // ── Final normalization ─ once, after all placement is done ───────
+        normalizeOffsets(grid);
         console.log(`[alignGridPrim] Aligned ${helixList.length} helices. Shifts:`, Object.fromEntries(Array.from(cumulativeShift.entries()).sort((a, b) => a[0] - b[0])));
         toscad.validateGrid(grid);
         const conflictsAfter = countGridConflicts(grid);
@@ -1095,215 +985,6 @@ var toscad;
         return { shifts: cumulativeShift };
     }
     toscad.alignGridPrim = alignGridPrim;
-    /**
-     * alignMergedGroups — merged-helix group alignment pass.
-     *
-     * Companion to alignGridPrim, and the only place that knows about merge
-     * provenance. setGrid is responsible purely for *placement*: it copies
-     * each merged helix's origin-groups into the grid with their pre-merge
-     * (separate-helix) offsets, which is collision-free but unaligned. This
-     * function performs the alignment.
-     *
-     * Each merged helix is temporarily split into pseudo-helices — one per
-     * origin-group — and alignGridPrim is run over the whole grid, so each
-     * group is anchored by its own crossovers to the full (already-placed)
-     * lattice. The groups were mutually disjoint on the offset axis at merge
-     * time (disjointness is a merge precondition), so once aligned they can be
-     * folded back under the real helixId without overlap. Afterwards,
-     * crossovers into the merged helix observe ~0 shift, so the pipeline's own
-     * alignGridPrim pass leaves the merged helix in place instead of shifting
-     * it as a unit and misaligning one of the groups.
-     *
-     * Must be called immediately after setGrid and BEFORE directionAlign2:
-     * directionAlign2 flips helices and rewrites offsets, which changes what
-     * collectShiftObservations sees.
-     *
-     * No-op unless at least one merged helix has 2+ origin-groups, so it is
-     * safe to call unconditionally on every pipeline iteration.
-     */
-    function alignMergedGroups(grid, mergedGroups, binderHelices) {
-        if (!mergedGroups || mergedGroups.size === 0)
-            return;
-        let maxHelixId = -1;
-        for (const [, m] of grid) {
-            if (m.helixId > maxHelixId)
-                maxHelixId = m.helixId;
-        }
-        // pseudo helixId -> real (merged) helixId
-        const pseudoToReal = new Map();
-        let nextPseudo = maxHelixId + 1;
-        mergedGroups.forEach((groups, helixId) => {
-            if (groups.length < 2)
-                return;
-            // Group 0 keeps the real helixId; the rest become pseudo-helices.
-            for (let gi = 1; gi < groups.length; gi++) {
-                const pseudo = nextPseudo++;
-                pseudoToReal.set(pseudo, helixId);
-                for (const ntId of groups[gi]) {
-                    const m = grid.get(ntId);
-                    if (m)
-                        m.helixId = pseudo;
-                }
-            }
-        });
-        // Every merged helix has a single origin-group: nothing to align, and
-        // no pseudo-helices were created, so leave the grid untouched.
-        if (pseudoToReal.size === 0)
-            return;
-        alignGridPrim(grid, binderHelices);
-        for (const [, m] of grid) {
-            const real = pseudoToReal.get(m.helixId);
-            if (real !== undefined)
-                m.helixId = real;
-        }
-        // Inter-group conflict resolution: NEVER distort a helix.
-        // An origin-group is moved ONLY as a whole unit, and ONLY
-        // its offsets change — direction/orientation is never
-        // touched. For every group that overlaps others on the
-        // same helix, compute the minimum-|delta| shift (searching
-        // BOTH +/- directions) that leaves it disjoint from every
-        // other group on that helix, then apply it in a single
-        // step. Searching both directions matters: alignGridPrim
-        // can shift a group either way relative to its siblings,
-        // and the "correct" resolution is whichever direction has
-        // the group already close to disjoint. A pure +delta nudge
-        // can either explode (walking a small group through a
-        // large one) or leave the crash-later state where the
-        // required delta exceeds the sweep budget.
-        // Shift every mark of one origin-group by delta (offset only).
-        const shiftGroup = (helixId, gi, delta) => {
-            if (delta === 0)
-                return;
-            const group = mergedGroups.get(helixId)?.[gi];
-            if (!group)
-                return;
-            for (const ntId of group) {
-                const m = grid.get(ntId);
-                if (m && m.helixId === helixId)
-                    m.offset += delta;
-            }
-        };
-        // For (helixId, gi), find the min-|delta| shift such that
-        // no mark of gi collides (same direction + same offset)
-        // with any mark of ANY OTHER group on the same helix.
-        // Returns 0 if already disjoint, or null if no delta
-        // within the search bound resolves the conflict.
-        const findCleanShift = (helixId, gi) => {
-            const groups = mergedGroups.get(helixId);
-            if (!groups)
-                return 0;
-            const myGroup = groups[gi];
-            if (!myGroup || myGroup.length === 0)
-                return 0;
-            const mySet = new Set(myGroup);
-            // My occupied cells, indexed by direction.
-            const myCells = new Map();
-            let myMin = Infinity, myMax = -Infinity;
-            for (const ntId of myGroup) {
-                const m = grid.get(ntId);
-                if (!m || m.helixId !== helixId)
-                    continue;
-                let s = myCells.get(m.direction);
-                if (!s) {
-                    s = new Set();
-                    myCells.set(m.direction, s);
-                }
-                s.add(m.offset);
-                if (m.offset < myMin)
-                    myMin = m.offset;
-                if (m.offset > myMax)
-                    myMax = m.offset;
-            }
-            if (myCells.size === 0)
-                return 0;
-            // Cells occupied by OTHER groups on the same helix.
-            const otherCells = new Map();
-            let otherMin = Infinity, otherMax = -Infinity;
-            for (const [ntId, m] of grid) {
-                if (m.helixId !== helixId)
-                    continue;
-                if (mySet.has(ntId))
-                    continue;
-                let s = otherCells.get(m.direction);
-                if (!s) {
-                    s = new Set();
-                    otherCells.set(m.direction, s);
-                }
-                s.add(m.offset);
-                if (m.offset < otherMin)
-                    otherMin = m.offset;
-                if (m.offset > otherMax)
-                    otherMax = m.offset;
-            }
-            if (otherCells.size === 0)
-                return 0;
-            const conflictsAt = (delta) => {
-                for (const [dir, myOffs] of myCells) {
-                    const others = otherCells.get(dir);
-                    if (!others)
-                        continue;
-                    for (const off of myOffs) {
-                        if (others.has(off + delta))
-                            return true;
-                    }
-                }
-                return false;
-            };
-            if (!conflictsAt(0))
-                return 0;
-            // Bound: any collision requires (my_off + delta) to
-            // land on an other-off, so |delta| ≤ (other-span +
-            // my-span). Add a small pad so we can step JUST past
-            // the far edge in either direction.
-            const mySpan = (myMax - myMin) || 0;
-            const otherSpan = (otherMax - otherMin) || 0;
-            const maxSearch = Math.max(mySpan + otherSpan + 8, 32);
-            for (let mag = 1; mag <= maxSearch; mag++) {
-                if (!conflictsAt(mag))
-                    return mag;
-                if (!conflictsAt(-mag))
-                    return -mag;
-            }
-            return null;
-        };
-        // Iterate: resolve one group at a time, using the current
-        // grid state (so gi=2 sees where gi=1 landed). Each
-        // successful shift makes that group globally disjoint on
-        // its helix, so the outer loop terminates when a full
-        // pass moves nothing. Guard cap protects against
-        // pathological chains between helices.
-        let movedAny = false;
-        let unresolvable = 0;
-        let sweepGuard = 0;
-        while (sweepGuard++ < 200) {
-            let didMove = false;
-            mergedGroups.forEach((groups, helixId) => {
-                for (let gi = 1; gi < groups.length; gi++) {
-                    const delta = findCleanShift(helixId, gi);
-                    if (delta === null) {
-                        unresolvable++;
-                        continue;
-                    }
-                    if (delta === 0)
-                        continue;
-                    shiftGroup(helixId, gi, delta);
-                    didMove = true;
-                    movedAny = true;
-                }
-            });
-            if (!didMove)
-                break;
-        }
-        if (movedAny) {
-            console.warn(`[alignMergedGroups] Merged-helix inter-group overlap resolved by min-|delta| shifts` +
-                ` (sweeps=${sweepGuard - 1}${unresolvable > 0 ? `, unresolved=${unresolvable}` : ''}).`);
-        }
-        if (unresolvable > 0) {
-            console.error(`[alignMergedGroups] ${unresolvable} merged-helix group(s) had no collision-free placement` +
-                ` within the search bound. Grid will fail validation downstream.`);
-        }
-    }
-    toscad.alignMergedGroups = alignMergedGroups;
     function applyHelixRenumber(helices, grid, helixPos, remap) {
         const n = helices.length;
         const newHelices = new Array(n);
@@ -1325,22 +1006,7 @@ var toscad;
         return { helices: newHelices, helixPos: newHelixPos };
     }
     toscad.applyHelixRenumber = applyHelixRenumber;
-    // ─────────────────────────────────────────────────────────────────────
-    //  renumberHelicesGNN — Greedy Nearest-Neighbor renumber
-    //
-    //  Same input/output contract as renumberHelices, but the path is built
-    //  by walking from helix 0 and at each step extending to the cheapest
-    //  unvisited helix under the same edgeCost (jump penalty + Euclidean
-    //  grid distance). No MST, no DFS preorder, no 2-Opt — the linearization
-    //  step itself respects locality, so consecutive IDs prefer crossover
-    //  neighbors and otherwise fall back to nearest physical neighbor.
-    //
-    //  Trade-off vs MST+DFS+2Opt: a greedy tour can leave one or two long
-    //  "tail" hops when the last unvisited node sits far from the current
-    //  endpoint. In exchange we avoid the mid-path teleports that come from
-    //  popping out of MST subtrees.
-    // ─────────────────────────────────────────────────────────────────────
-    function renumberHelicesGNN(grid, helixPos, lattice = 'honeycomb', binderHelices) {
+    function renumberHelices(grid, helixPos, lattice = 'honeycomb', binderHelices) {
         let RENUMBER_JUMP_PENALTY = 100; // Tuned for typical honeycomb/square spacing
         // ── 1. Adjacency + cost helpers (identical to renumberHelices) ──
         const { crossovers, helixIds } = toscad.collectCrossovers(grid);
@@ -1358,16 +1024,6 @@ var toscad;
                 : scadnano.honeycombToWorld(pos[0], pos[1]);
             return [v.x, v.y];
         });
-        // Anchor selection: lowest row (y), tie-broken by lowest col (x).
-        // This pins helix 0 to the top-left corner of the layout for both
-        // lattices. Because helix 0 also seeds calculateGlobalPositions'
-        // Phase-1 BFS on the NEXT iteration, we must not let it be a binder:
-        // binders don't participate in the offset MST or lattice-detection
-        // passes, so a binder anchor would misroot the whole layout. When
-        // the geometric top-left IS a binder, walk the same (row, col)
-        // ordering to the next candidate that isn't. If every helix is a
-        // binder (degenerate — no core structure), fall back to the pure
-        // geometric top-left.
         const binderNodeSet = new Set();
         if (Array.isArray(binderHelices)) {
             for (const hid of binderHelices) {
@@ -1400,12 +1056,12 @@ var toscad;
             else {
                 // Every helix is a binder — nothing to pick from. Log so the
                 // caller can see something is off with the input.
-                console.warn(`[renumberHelicesGNN] every helix is flagged as a binder; ` +
+                console.warn(`[renumberHelices] every helix is flagged as a binder; ` +
                     `falling back to geometric top-left (helixId=${nodes[startNode]}).`);
             }
         }
         const startPos = helixPos.get(nodes[startNode]) ?? [0, 0];
-        console.log(`[renumberHelicesGNN] anchor node idx=${startNode} ` +
+        console.log(`[renumberHelices] anchor node idx=${startNode} ` +
             `(helixId=${nodes[startNode]}, col=${startPos[0]}, row=${startPos[1]})` +
             (skippedBinderAnchors > 0
                 ? ` — skipped ${skippedBinderAnchors} binder(s) higher in top-left ordering`
@@ -1436,7 +1092,7 @@ var toscad;
             const order = nodes.slice();
             const remap = new Map();
             order.forEach((id, i) => remap.set(id, i));
-            console.log(`[renumberHelicesGNN] n=${n}, nothing to renumber.`);
+            console.log(`[renumberHelices] n=${n}, nothing to renumber.`);
             return {
                 order, remap,
                 stats: {
@@ -1516,10 +1172,10 @@ var toscad;
             finalJumps: final.jumps,
             finalDistance: final.distance,
         };
-        console.log(`[renumberHelicesGNN] n=${n}, components=${nComps}, ` +
+        console.log(`[renumberHelices] n=${n}, components=${nComps}, ` +
             `jumps lower bound=${lowerBoundJumps} | ` +
             `final=[${final.jumps} jumps, dist=${final.distance.toFixed(2)}]`);
         return { order, remap, stats };
     }
-    toscad.renumberHelicesGNN = renumberHelicesGNN;
+    toscad.renumberHelices = renumberHelices;
 })(toscad || (toscad = {}));

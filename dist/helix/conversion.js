@@ -1128,7 +1128,7 @@ var toscad;
         let helixPos = toscad.posCorr5(kr, helices, pinnedIds);
         // Optional spatial renumbering of the output helix numbering (ids/callsigns untouched).
         if (renumber) {
-            const { remap } = toscad.renumberHelicesGNN(grid, helixPos, latticeType, currentBinders);
+            const { remap } = toscad.renumberHelices(grid, helixPos, latticeType, currentBinders);
             ({ helices, helixPos } = toscad.applyHelixRenumber(helices, grid, helixPos, remap));
             // Helix ids changed, so re-derive angles and re-run kruskals + posCorr5 to settle into stable state.
             networkMap = toscad.getAngles(grid, helices, latticeType);
