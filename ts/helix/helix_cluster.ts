@@ -47,11 +47,11 @@ namespace helix {
 			});
 		};
 
-		return assembleClusters(helices, minPts, binderIds, nucleotideOwner, candidates, regionQuery);
+		return dbscanCore(helices, minPts, binderIds, nucleotideOwner, candidates, regionQuery);
 	}
 
 	// DBSCAN core, used by both spatial and orientation clustering.
-	function assembleClusters(
+	function dbscanCore(
 		helices: Nucleotide[][],
 		minPts: number,
 		binderIds: Set<number>,
@@ -181,7 +181,7 @@ namespace helix {
 			);
 		};
 
-		return assembleClusters(helices, minPts, binderIds, nucleotideOwner, candidates, regionQuery);
+		return dbscanCore(helices, minPts, binderIds, nucleotideOwner, candidates, regionQuery);
 	}
 
 	// Merge clusters that are small (<= 2 helices) into larger clusters

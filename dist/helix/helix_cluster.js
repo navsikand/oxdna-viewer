@@ -43,11 +43,11 @@ var helix;
                 return !!otherAxis && angularSeparation(axis, otherAxis) <= MAX_ANGULAR_SEPARATION;
             });
         };
-        return assembleClusters(helices, minPts, binderIds, nucleotideOwner, candidates, regionQuery);
+        return dbscanCore(helices, minPts, binderIds, nucleotideOwner, candidates, regionQuery);
     }
     helix.dbscan = dbscan;
     // DBSCAN core, used by both spatial and orientation clustering.
-    function assembleClusters(helices, minPts, binderIds, nucleotideOwner, candidates, regionQuery) {
+    function dbscanCore(helices, minPts, binderIds, nucleotideOwner, candidates, regionQuery) {
         const labels = new Map();
         const visited = new Set();
         let clusterId = 0;
@@ -156,7 +156,7 @@ var helix;
         const regionQuery = (helixId) => {
             return candidates.filter(otherId => otherId !== helixId && sharedCrossovers(helixId, otherId) >= MIN_SHARED_CROSSOVERS);
         };
-        return assembleClusters(helices, minPts, binderIds, nucleotideOwner, candidates, regionQuery);
+        return dbscanCore(helices, minPts, binderIds, nucleotideOwner, candidates, regionQuery);
     }
     helix.spatialDbscan = spatialDbscan;
     // Merge clusters that are small (<= 2 helices) into larger clusters

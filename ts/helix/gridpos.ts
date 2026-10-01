@@ -1325,6 +1325,82 @@ interface LatticePhaseConfig {
             }
             return { jumps, distance };
         };
+        const initial = pathStats(path);
+
+        const EPS = 1e-9;
+
+        // 2-opt: reverse path[i..j] when swapping the two boundary edges helps.
+        const twoOptPass = (p: number[]): boolean => {
+            const m = p.length;
+            let improved = false;
+            for (let i = 1; i < m - 1; i++) {
+                for (let j = i + 1; j < m; j++) {
+                    const a = p[i - 1], b = p[i], c = p[j];
+                    const hasD = j + 1 < m;
+                    const d = hasD ? p[j + 1] : -1;
+                    const before = edgeCost(a, b) + (hasD ? edgeCost(c, d) : 0);
+                    const after  = edgeCost(a, c) + (hasD ? edgeCost(b, d) : 0);
+                    if (after + EPS < before) {
+                        let lo = i, hi = j;
+                        while (lo < hi) { const t = p[lo]; p[lo] = p[hi]; p[hi] = t; lo++; hi--; }
+                        improved = true;
+                    }
+                }
+            }
+            return improved;
+        };
+
+        // Or-opt: relocate a short run (length 1..3) to a cheaper gap. This is
+        // what rescues single stranded helices that 2-opt alone can't place.
+        const orOptPass = (p: number[]): boolean => {
+            const m = p.length;
+            for (let L = 1; L <= 3 && L < m - 1; L++) {
+                for (let i = 1; i + L <= m; i++) {
+                    const prev = p[i - 1];
+                    const first = p[i];
+                    const last = p[i + L - 1];
+                    const hasNext = i + L < m;
+                    const next = hasNext ? p[i + L] : -1;
+
+                    const removed = edgeCost(prev, first) + (hasNext ? edgeCost(last, next) : 0);
+                    const bridged = hasNext ? edgeCost(prev, next) : 0;
+                    const removeGain = removed - bridged;
+                    if (removeGain <= EPS) continue;
+
+                    const seg = p.slice(i, i + L);
+                    const rest = p.slice(0, i).concat(p.slice(i + L));
+
+                    // Insert after rest[k] (never before the anchor at rest[0]).
+                    for (let k = 0; k < rest.length; k++) {
+                        const u = rest[k];
+                        const hasW = k + 1 < rest.length;
+                        const w = hasW ? rest[k + 1] : -1;
+                        const addCost = edgeCost(u, first)
+                            + (hasW ? edgeCost(last, w) : 0)
+                            - (hasW ? edgeCost(u, w) : 0);
+                        if (addCost + EPS < removeGain) {
+                            const np = rest.slice(0, k + 1).concat(seg, rest.slice(k + 1));
+                            for (let z = 0; z < np.length; z++) p[z] = np[z];
+                            return true;
+                        }
+                    }
+                }
+            }
+            return false;
+        };
+
+        const MAX_ITERS = 1000;
+        // Phase 1: 2-opt to convergence.
+        for (let it = 0; it < MAX_ITERS && twoOptPass(path); it++) { /* iterate */ }
+        const afterPhase1 = pathStats(path);
+
+        // Phase 2: alternate Or-opt relocations with 2-opt until stable.
+        for (let it = 0; it < MAX_ITERS; it++) {
+            let changed = false;
+            if (orOptPass(path)) changed = true;
+            while (twoOptPass(path)) changed = true;
+            if (!changed) break;
+        }
         const final = pathStats(path);
 
         // ── 5. Build remap and report ──────────────────────────────────
@@ -1336,9 +1412,9 @@ interface LatticePhaseConfig {
             n,
             components: nComps,
             lowerBoundJumps,
-            initialJumps: final.jumps,
-            initialDistance: final.distance,
-            afterPhase1Jumps: final.jumps,
+            initialJumps: initial.jumps,
+            initialDistance: initial.distance,
+            afterPhase1Jumps: afterPhase1.jumps,
             finalJumps: final.jumps,
             finalDistance: final.distance,
         };
@@ -1346,6 +1422,8 @@ interface LatticePhaseConfig {
         console.log(
             `[renumberHelices] n=${n}, components=${nComps}, ` +
             `jumps lower bound=${lowerBoundJumps} | ` +
+            `greedy=[${initial.jumps} jumps, dist=${initial.distance.toFixed(2)}] -> ` +
+            `after 2-opt=[${afterPhase1.jumps} jumps] -> ` +
             `final=[${final.jumps} jumps, dist=${final.distance.toFixed(2)}]`
         );
 
