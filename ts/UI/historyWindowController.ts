@@ -76,7 +76,11 @@ class HistoryWindowController {
 
   private async run(id: string, structureId: string): Promise<void> {
     const exists = this.deps.windowExists(id);
-    const open = exists && this.deps.isOpen(id);
+    // Staleness is decided before "is it open": a dangling element has no
+    // container to read a display state from, and asking anyway is what made the
+    // stale case throw instead of being cleaned up.
+    const stale = exists && this.deps.isStale(id);
+    const open = !stale && exists && this.deps.isOpen(id);
 
     if (open) {
       if (this.lastStructureId === structureId) {
@@ -89,7 +93,7 @@ class HistoryWindowController {
       return;
     }
 
-    if (exists && this.deps.isStale(id)) {
+    if (stale) {
       // Only a genuinely dangling element is removed; a live one is opened.
       this.deps.removeStale(id);
     }

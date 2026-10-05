@@ -205,6 +205,17 @@ async function main(): Promise<void> {
     deps.exists = true;
     deps.open = false;
     deps.stale = true;
+    // A dangling element has no display state to read: the controller must not
+    // ask about it before removing it (the real isOpen dereferenced the DOM and
+    // threw for exactly this case). It may - and must - ask again after creating
+    // the replacement window.
+    const realIsOpen = deps.isOpen.bind(deps);
+    (deps as any).isOpen = () => {
+      if (deps.stale && deps.calls.createWindow === 0) {
+        throw new Error("isOpen must not be consulted while the element is stale");
+      }
+      return realIsOpen();
+    };
     const controller = new HistoryWindowController(deps);
     await controller.open("structure-1");
     assert(deps.calls.removeStale === 1, `removeStale was called ${deps.calls.removeStale} times`);

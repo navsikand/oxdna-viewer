@@ -715,14 +715,15 @@ class View {
 
     public isWindowOpen(id: string): boolean {
         let elem = this.doc.getElementById(id);
-        if (elem) {
-            // Should work but doesn't
-            //return Metro.window.isOpen(elem);
-            return elem.parentElement.parentElement.style.display != "none";
-        } else {
-            return false;
-        }
-
+        if (!elem) return false;
+        // Should work but doesn't
+        //return Metro.window.isOpen(elem);
+        // The element can exist while detached from its Metro container (a stale
+        // window removed from the DOM); dereferencing the parent chain blindly
+        // threw exactly in the case that was supposed to be cleaned up.
+        const container = elem.parentElement && elem.parentElement.parentElement;
+        if (!container) return false;
+        return container.style.display != "none";
     }
 
     public toggleWindow(id: string, oncreate?: (structureId?: string) => void, structureId?: string) {
