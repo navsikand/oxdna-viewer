@@ -59,6 +59,7 @@
     "./ts/scene/scene_setup.ts",
     "./ts/UI/keybindings.ts",
     "./ts/UI/base_selector.ts",
+    "./ts/UI/historyWindowController.ts",
     "./ts/UI/UI.ts",
     "ts/ox_serve/live_relax.ts",
     "ts/ox_serve/relax_scenarios.ts",
