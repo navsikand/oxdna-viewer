@@ -1471,6 +1471,9 @@
         <script src="./dist/editing/doUndo.js"></script>
         <script src="./dist/editing/dijkstra.js"></script>
         <script src="./dist/editing/rigid-body_simulation.js"></script>
+        <!-- Must load before UI.js: UI.ts declares a global class (this file is a
+             classic script, not a module), so the browser needs it in scope. -->
+        <script src="./dist/UI/historyWindowController.js"></script>
         <script src="./dist/UI/UI.js"></script>
         <script src="./dist/main.js"></script>
         <script src="./dist/model/basicElement.js"></script>

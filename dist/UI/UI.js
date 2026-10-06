@@ -693,14 +693,17 @@ class View {
     }
     isWindowOpen(id) {
         let elem = this.doc.getElementById(id);
-        if (elem) {
-            // Should work but doesn't
-            //return Metro.window.isOpen(elem);
-            return elem.parentElement.parentElement.style.display != "none";
-        }
-        else {
+        if (!elem)
             return false;
-        }
+        // Should work but doesn't
+        //return Metro.window.isOpen(elem);
+        // The element can exist while detached from its Metro container (a stale
+        // window removed from the DOM); dereferencing the parent chain blindly
+        // threw exactly in the case that was supposed to be cleaned up.
+        const container = elem.parentElement && elem.parentElement.parentElement;
+        if (!container)
+            return false;
+        return container.style.display != "none";
     }
     toggleWindow(id, oncreate, structureId) {
         let elem = this.doc.getElementById(id);
@@ -725,18 +728,24 @@ class View {
             flux.toggleDatasetsandNetworks();
         }
     }
-    createWindow(id, oncreate, structureId) {
-        fetch(`windows/${id}.json`)
+    /**
+     * Creates a Metro window and resolves once its HTML has loaded.
+     *
+     * It deliberately does NOT re-enter openCommitHistoryModal: that call used to
+     * run from this load callback while the first call was still opening the
+     * window, so the second call toggled the freshly opened window shut ("View
+     * History" needed two clicks). Opening is the caller's single decision now,
+     * made by HistoryWindowController.
+     */
+    createWindow(id, oncreate, _structureId) {
+        return fetch(`windows/${id}.json`)
             .then(response => response.json())
             .then(data => {
             let w = Metro.window.create(data);
             w[0].id = id;
-            w.load(`windows/${id}.html`).then(() => {
+            return w.load(`windows/${id}.html`).then(() => {
                 if (oncreate)
                     oncreate();
-                if (id === 'commitHistoryWindow' && structureId) {
-                    this.openCommitHistoryModal(structureId);
-                }
             });
         });
     }
@@ -751,16 +760,50 @@ class View {
             Metro.toast.create("Cannot open history. To open history please load a project.", null, 5000, "alert");
             return;
         }
-        const windowId = "commitHistoryWindow";
-        const elem = this.doc.getElementById(windowId);
-        // If the window element exists but is not currently open, remove it from the DOM.
-        if (elem && !this.isWindowOpen(windowId)) {
-            elem.parentElement.parentElement.remove();
+        // Single decision point: the controller cannot both create and toggle the
+        // window, and repeated clicks while it loads join the same promise.
+        void this.getHistoryController().open(structureId);
+    }
+    historyController;
+    getHistoryController() {
+        if (!this.historyController) {
+            const windowId = "commitHistoryWindow";
+            this.historyController = new HistoryWindowController({
+                windowId,
+                isOpen: (id) => this.isWindowOpen(id),
+                windowExists: (id) => !!this.doc.getElementById(id),
+                // Present in the DOM but detached from its Metro container: only
+                // then is removing it safe (the old code dereferenced
+                // parentElement.parentElement unconditionally).
+                isStale: (id) => {
+                    const elem = this.doc.getElementById(id);
+                    if (!elem)
+                        return false;
+                    const container = elem.parentElement && elem.parentElement.parentElement;
+                    return !elem.isConnected || !container;
+                },
+                createWindow: (id) => this.createWindow(id),
+                toggleWindow: (id) => this.toggleWindow(id),
+                removeStale: (id) => {
+                    const elem = this.doc.getElementById(id);
+                    if (!elem)
+                        return;
+                    const container = elem.parentElement && elem.parentElement.parentElement;
+                    if (container && container.parentElement) {
+                        container.parentElement.removeChild(container);
+                    }
+                    else {
+                        elem.remove();
+                    }
+                },
+                initCommitHistory: (id) => {
+                    console.log("commitHistoryWindow initialised for structureId:", id);
+                    window.initCommitHistory(id);
+                },
+                log: (message) => console.log(message),
+            });
         }
-        this.toggleWindow(windowId, (id) => {
-            console.log("commitHistoryWindow created for structureId:", id);
-            window.initCommitHistory(structureId);
-        }, structureId);
+        return this.historyController;
     }
     showHoverInfo(pos, e) {
         let hoverInfo = document.getElementById('hoverInfo');
