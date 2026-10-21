@@ -155,7 +155,7 @@ namespace scadnanoExport {
     // Ribbon dialog "Export". Without helix positions it writes the file directly;
     // with them it opens the grid pane on the pipeline's layout instead.
     export function handleDialogExport(): void {
-        const { name, lattice, includeHelixPos, wireframe, cluster, clusterMode } = dialogOptions();
+        const { lattice, includeHelixPos, wireframe, cluster, clusterMode } = dialogOptions();
         closeDialog();
 
         requestAnimationFrame(() => requestAnimationFrame(() => {
@@ -164,14 +164,16 @@ namespace scadnanoExport {
                 () => {
                     try {
                         result = runPipeline(lattice, wireframe, cluster, clusterMode);
-                        if (!includeHelixPos) writeScadnanoFile(name, result);
+                        if (!includeHelixPos) {
+                            result.helixPos = new Map(result.helices.map((_, id) => [id, [0, id]]));
+                        }
                     } catch (err) {
                         result = null;
                         notify(`Scadnano export failed: ${err}`, 'alert');
                     }
                 },
                 () => {
-                    if (!includeHelixPos || !result) return;
+                    if (!result) return;
                     window.currentScadnanoHelixPos = new Map(result.helixPos);
                     clearHistory(); // fresh pipeline run: start a new, empty history
                     showGrid(result.helixPos, result.latticeType);
