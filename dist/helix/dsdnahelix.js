@@ -50,6 +50,10 @@ var helix;
                 return;
             if (!nt.pair)
                 return;
+            // Only drop intra-strand pairs on DNA strands. RNA strands legitimately form
+            // intra-strand (secondary-structure) pairings, so leave those intact.
+            if (nt.strand.isRNA())
+                return;
             if (nt.pair.strand === nt.strand) {
                 const mate = nt.pair;
                 nt.pair = null;
@@ -370,6 +374,10 @@ var helix;
             }; // surely no helices if no partials.
         }
         const dot = 0.5;
+        // For RNA structures we join partials by helix-axis alignment rather than by averaged
+        // a3 vectors. In A-form RNA the bases tilt away from the helix axis, so averaged a3
+        // vectors are a poor proxy for the duplex direction; getPartialAxis gives the true axis.
+        const structureIsRNA = edit.isRNA();
         // quick lookup for id to partial index and stubs index.
         const idToPartial = new Map();
         partials.forEach((list, idx) => {
@@ -471,6 +479,32 @@ var helix;
         const getSideForNt = (pIdx, ntId) => {
             return ntToSide.get(pIdx)?.get(ntId);
         };
+        // Helix axis of a partial (normalized), computed via getPartialAxis and cached.
+        // Used only for RNA, where axis alignment replaces averaged a3 vectors.
+        const partialAxisCache = new Map();
+        const getPartialAxisVec = (partialIdx) => {
+            if (partialAxisCache.has(partialIdx))
+                return partialAxisCache.get(partialIdx);
+            const ends = partialEndsMap.get(partialIdx);
+            let axis = null;
+            if (ends) {
+                const { planeVector } = getPartialAxis(ends);
+                if (planeVector.lengthSq() > 1e-12)
+                    axis = planeVector.clone().normalize();
+            }
+            partialAxisCache.set(partialIdx, axis);
+            return axis;
+        };
+        // 60° angle rule between two partial axes. Axis direction from getPartialAxis is only
+        // defined up to a sign, so compare the acute angle: |cos θ| > 0.5  ⇔  θ < 60°.
+        // Returns -1 (reject) when either axis is unavailable, matching the a3 helpers.
+        const partialAxisAlignment = (idxA, idxB) => {
+            const axisA = getPartialAxisVec(idxA);
+            const axisB = getPartialAxisVec(idxB);
+            if (!axisA || !axisB)
+                return -1;
+            return Math.abs(axisA.dot(axisB));
+        };
         // Track direct adjacency between partials (used for stub-bridge safety check).
         const partialAdj = new Map();
         const addPartialAdj = (a, b) => {
@@ -499,6 +533,12 @@ var helix;
             stubsLinks.set(stubNode, links);
         };
         const attachDot = (a, b, strand) => {
+            // RNA: score partial<->partial joins by helix-axis alignment (60° rule) instead of
+            // averaged a3 vectors. Stubs are single nucleotides with no axis, so any join
+            // involving a stub still falls back to the a3 path below.
+            if (structureIsRNA && a.kind === 'partial' && b.kind === 'partial') {
+                return partialAxisAlignment(a.index, b.index);
+            }
             let vecA = null;
             let vecB = null;
             if (a.kind === 'partial')
@@ -628,6 +668,10 @@ var helix;
         };
         const stubEdges = [];
         const partialsBridgeDot = (a, b) => {
+            // RNA: a stub bridge still joins two partials, so score it by their axis alignment.
+            if (structureIsRNA) {
+                return partialAxisAlignment(a.partialIdx, b.partialIdx);
+            }
             const vecA = getPartialStrandA3(a.partialIdx, a.strand);
             const vecB = getPartialStrandA3(b.partialIdx, b.strand);
             if (!vecA || !vecB)

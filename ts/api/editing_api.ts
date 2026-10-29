@@ -817,6 +817,27 @@ module edit{
         }
     }
 
+    export function isRNA(strand?: Strand): boolean {
+        // Collect the distinct bases present so a single membership test decides the type.
+        const bases = new Set<string>();
+
+        const scanStrand = (s: Strand) => {
+            if (!s.isNucleicAcid()) return;
+            s.forEach((e: Nucleotide) => {
+                if (e.type) bases.add(e.type.toUpperCase());
+            });
+        };
+
+        if (strand) {
+            scanStrand(strand);
+        } else {
+            systems.forEach(sys => sys.strands.forEach(scanStrand));
+        }
+
+        // Uracil only shows up in RNA; its presence is enough to classify the structure.
+        return bases.has('U');
+    }
+
     /**
      * Creates a new strand with the provided sequence
      * @param sequence
