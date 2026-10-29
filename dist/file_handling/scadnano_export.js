@@ -148,6 +148,16 @@ var scadnanoExport;
         }
     }
     scadnanoExport.exportFromGridView = exportFromGridView;
+    function exportHelicesAsJSON() {
+        if (!layout) {
+            notify('No helices available to export.', 'warning');
+            return;
+        }
+        const { name } = dialogOptions();
+        const helices = layout.helices.map(h => h.map(nt => nt.id));
+        makeTextFile(`${name}.json`, JSON.stringify(helices));
+    }
+    scadnanoExport.exportHelicesAsJSON = exportHelicesAsJSON;
     function toggleGridDropdown(checkboxElement) {
         const dropdown = document.getElementById('scadnanoGrid');
         if (dropdown)
@@ -703,6 +713,7 @@ var scadnanoExport;
             exportFromGridView(window.currentScadnanoHelixPos);
         });
         document.getElementById('scadnanoGridLockHelicesBtn')?.addEventListener('click', lockSelectedHelices);
+        document.getElementById('scadnanoGridExportHelicesBtn')?.addEventListener('click', exportHelicesAsJSON);
         document.getElementById('scadnanoGridCombineBtn')?.addEventListener('click', combineSelectedHelices);
         document.getElementById('scadnanoGridSplitFromSelectedBtn')?.addEventListener('click', splitSelectedHelix);
         document.getElementById('scadnanoGridRecalcBtn')?.addEventListener('click', recalculateGrid);

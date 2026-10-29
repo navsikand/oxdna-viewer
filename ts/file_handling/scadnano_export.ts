@@ -198,6 +198,16 @@ namespace scadnanoExport {
         }
     }
 
+    export function exportHelicesAsJSON(): void {
+        if (!layout) {
+            notify('No helices available to export.', 'warning');
+            return;
+        }
+        const { name } = dialogOptions();
+        const helices = layout.helices.map(h => h.map(nt => nt.id));
+        makeTextFile(`${name}.json`, JSON.stringify(helices));
+    }
+
     export function toggleGridDropdown(checkboxElement: HTMLInputElement): void {
         const dropdown = document.getElementById('scadnanoGrid') as HTMLSelectElement | null;
         if (dropdown) dropdown.disabled = !checkboxElement.checked;
@@ -774,6 +784,7 @@ namespace scadnanoExport {
             exportFromGridView(window.currentScadnanoHelixPos);
         });
         document.getElementById('scadnanoGridLockHelicesBtn')?.addEventListener('click', lockSelectedHelices);
+        document.getElementById('scadnanoGridExportHelicesBtn')?.addEventListener('click', exportHelicesAsJSON);
         document.getElementById('scadnanoGridCombineBtn')?.addEventListener('click', combineSelectedHelices);
         document.getElementById('scadnanoGridSplitFromSelectedBtn')?.addEventListener('click', splitSelectedHelix);
         document.getElementById('scadnanoGridRecalcBtn')?.addEventListener('click', recalculateGrid);
