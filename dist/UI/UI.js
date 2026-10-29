@@ -1,3 +1,4 @@
+"use strict";
 var VRButton;
 function select3psWrapper() {
     if (selectedBases.size == 0) {
@@ -966,6 +967,7 @@ class View {
     }
 }
 let view = new View(document);
+window.view = view;
 // This Class is basically a giant container to deal with all the graphing for the FluctuationWindow
 class fluxGraph {
     title;
@@ -1034,7 +1036,7 @@ class fluxGraph {
                 //    this.chart.toBase64Image();
                 //}
             },
-            responsiveAnimationDuration: 0,
+            responsiveAnimationDuration: 0, // animation duration after a resize
             responsive: true,
             title: {
                 display: true,
