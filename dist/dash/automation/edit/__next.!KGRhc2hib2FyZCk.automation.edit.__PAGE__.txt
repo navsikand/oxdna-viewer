@@ -1,9 +1,9 @@
 1:"$Sreact.fragment"
 2:I[49780,[],"ClientPageRoot"]
-3:I[99590,["5254","static/chunks/f6acfc84-d407fcfb6116d7c0.js","2069","static/chunks/2069-d9feabc11d462941.js","2631","static/chunks/2631-48b5bf57f6d9325f.js","6357","static/chunks/6357-9cc0ad94acf4a73a.js","5430","static/chunks/5430-0a8e9c0add505b7b.js","2173","static/chunks/2173-1e42b85ae94ba3bd.js","3320","static/chunks/3320-e35f95032b6df493.js","4713","static/chunks/4713-cb9ec01b84d2d260.js","7818","static/chunks/7818-57f369e629494fb0.js","2676","static/chunks/2676-f8a7784f30ef2f02.js","2633","static/chunks/app/(dashboard)/automation/edit/page-6b455f9137564017.js"],"default"]
+3:I[99590,["5254","static/chunks/f6acfc84-d407fcfb6116d7c0.js","2069","static/chunks/2069-d9feabc11d462941.js","2631","static/chunks/2631-48b5bf57f6d9325f.js","6357","static/chunks/6357-9cc0ad94acf4a73a.js","5430","static/chunks/5430-0a8e9c0add505b7b.js","2173","static/chunks/2173-1e42b85ae94ba3bd.js","3320","static/chunks/3320-e35f95032b6df493.js","4713","static/chunks/4713-cb9ec01b84d2d260.js","7818","static/chunks/7818-57f369e629494fb0.js","2676","static/chunks/2676-5c3005632824b07d.js","2633","static/chunks/app/(dashboard)/automation/edit/page-6b455f9137564017.js"],"default"]
 6:I[44704,[],"OutletBoundary"]
 7:"$Sreact.suspense"
-0:{"rsc":["$","$1","c",{"children":[["$","$L2",null,{"Component":"$3","serverProvidedParams":{"searchParams":{},"params":{},"promises":["$@4","$@5"]}}],null,["$","$L6",null,{"children":["$","$7",null,{"name":"Next.MetadataOutlet","children":"$@8"}]}]]}],"isPartial":false,"staleTime":300,"varyParams":null,"buildId":"uWoxscvohoQJk_5Lubddh"}
+0:{"rsc":["$","$1","c",{"children":[["$","$L2",null,{"Component":"$3","serverProvidedParams":{"searchParams":{},"params":{},"promises":["$@4","$@5"]}}],null,["$","$L6",null,{"children":["$","$7",null,{"name":"Next.MetadataOutlet","children":"$@8"}]}]]}],"isPartial":false,"staleTime":300,"varyParams":null,"buildId":"IOBV4vKFocIzIQEJrlPI7"}
 4:{}
 5:"$0:rsc:props:children:0:props:serverProvidedParams:params"
 8:null
