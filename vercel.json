@@ -1,8 +1,12 @@
 {
   "rewrites": [
     {
-      "source": "/dist/dash/:path((?!_next|api|favicon.ico|sw.js).*)",
-      "destination": "/dist/dash/:path.html"
+      "source": "/dist/dash",
+      "destination": "/dist/dash/index.html"
+    },
+    {
+      "source": "/dist/dash/:path((?!.*\\..*).*)",
+      "destination": "/dist/dash/index.html"
     }
   ]
 }

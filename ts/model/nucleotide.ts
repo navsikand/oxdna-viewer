@@ -40,17 +40,17 @@ abstract class Nucleotide extends BasicElement {
         if (this.dummySys !== null) {
             sys = this.dummySys;
         }
-        // according to base.py a2 is the cross of a1 and a3
-        let a2 = a1.clone().cross(a3);
+        // a2 is the negative cross product of a1 and a3
+        let a2 = a1.clone().cross(a3).multiplyScalar(-1).normalize();
         
         // compute backbone position
         let bb = this.calcBBPos(p, a1, a2, a3);
 
         // compute nucleoside cm
         let ns = new THREE.Vector3(
-            p.x + 0.4 * a1.x,
-            p.y + 0.4 * a1.y,
-            p.z + 0.4 * a1.z
+            p.x + 0.34 * a1.x,
+            p.y + 0.34 * a1.y,
+            p.z + 0.34 * a1.z
         )
 
         // compute nucleoside rotation
@@ -290,7 +290,7 @@ abstract class Nucleotide extends BasicElement {
     getA1 () {
         const cm = this.getPos();
         const ns = this.getInstanceParameter3("nsOffsets");
-        return ns.clone().sub(cm).divideScalar(0.4).normalize();
+        return ns.clone().sub(cm).divideScalar(0.34).normalize();
     }
 
     abstract getA2(): THREE.Vector3;

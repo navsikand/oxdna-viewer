@@ -40,15 +40,23 @@ async function initCommitHistory(structureId) {
     }
     if (!structure || !structure.commits || !Array.isArray(structure.commits)) { // Updated to use 'commits'
         console.error(`initCommitHistory ERROR: Structure with id ${structureId} not found or is malformed.`, structure);
-        commitGraphElement.innerHTML = `<p>Error: Structure with id ${structureId} not found or is invalid.</p>`;
+        const errorMessage = document.createElement('p');
+        errorMessage.textContent = `Error: Structure with id ${structureId} not found or is invalid.`;
+        commitGraphElement.replaceChildren(errorMessage);
         return;
     }
     console.log("initCommitHistory: Successfully retrieved structure:", structure);
     // Ensure commits are processed chronologically (oldest -> newest)
     const commitsSorted = structure.commits.slice();
     commitsSorted.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
-    const currentBranchName = urlParams.get('branch') || 'main';
+    const currentBranchName = urlParams.get('branch') || structure.currentBranchName || structure.defaultBranchName || 'main';
     console.log(`initCommitHistory: Current branch name is '${currentBranchName}'`);
+    // Determine which commit is currently loaded/viewed in the main oxView window.
+    // The main page URL carries ?commit=<id> whenever a specific commit is loaded;
+    // otherwise fall back to the structure's persisted currentCommitId (the head
+    // the user is currently working on).
+    const currentViewedCommitId = urlParams.get('commit') || structure.currentCommitId || null;
+    console.log(`initCommitHistory: Currently viewed commit is '${currentViewedCommitId}'`);
     // Create a map for quick commit lookup and to store children
     const commitMap = new Map();
     console.log("initCommitHistory: Building commit map...");
@@ -87,11 +95,17 @@ async function initCommitHistory(structureId) {
     console.log("initCommitHistory: Found root nodes:", rootNodes);
     // Create branch head map for easy lookup
     const branchHeads = new Map();
+    const commitBranches = new Map();
     if (structure.branches) {
         for (const branchName in structure.branches) {
             const commitIds = structure.branches[branchName];
             if (commitIds && commitIds.length > 0) {
                 branchHeads.set(commitIds[commitIds.length - 1], branchName);
+                commitIds.forEach((commitId) => {
+                    if (!commitBranches.has(commitId)) {
+                        commitBranches.set(commitId, branchName);
+                    }
+                });
             }
         }
     }
@@ -158,6 +172,13 @@ async function initCommitHistory(structureId) {
         .share-link:hover {
             text-decoration: underline;
         }
+        .current-commit-badge {
+            color: #888;
+            font-size: 0.75em;
+            font-style: italic;
+            margin-left: 8px;
+            white-space: nowrap;
+        }
     `;
     commitGraphElement.appendChild(style);
     function renderTree(nodes, container) {
@@ -173,10 +194,23 @@ async function initCommitHistory(structureId) {
             detailsDiv.classList.add('commit-details');
             const commitLink = document.createElement('a');
             commitLink.classList.add('commit-link');
-            commitLink.href = `/?structureId=${structureId}&commit=${node.commit.commitId}&load=true`;
+            const commitParams = new URLSearchParams({ structureId, commit: node.commit.commitId, load: 'true' });
+            const branchNameForNode = commitBranches.get(node.commit.commitId) || branchHeads.get(node.commit.commitId);
+            if (branchNameForNode) {
+                commitParams.set('branch', branchNameForNode);
+            }
+            commitLink.href = `/?${commitParams.toString()}`;
             commitLink.textContent = node.commit.commitName;
             commitLink.title = `Commit ID: ${node.commit.commitId}`;
             detailsDiv.appendChild(commitLink);
+            // Mark the commit currently loaded/viewed in oxView.
+            if (node.commit.commitId === currentViewedCommitId) {
+                const currentBadge = document.createElement('span');
+                currentBadge.classList.add('current-commit-badge');
+                currentBadge.textContent = 'viewing';
+                currentBadge.title = 'This commit is currently loaded in the viewer';
+                detailsDiv.appendChild(currentBadge);
+            }
             if (branchHeads.has(node.commit.commitId)) {
                 const branchName = branchHeads.get(node.commit.commitId);
                 const branchLabel = document.createElement('span');
@@ -230,8 +264,27 @@ async function generateShareInfo(structureId, commit) {
         if (!structure) {
             throw new Error("Structure not found");
         }
-        // Convert ArrayBuffer to base64 string
-        const uint8Array = new Uint8Array(commit.data);
+        let dataToShare = commit.data;
+        if (commit.isEncrypted && commit.encryptedData && commit.iv) {
+            try {
+                const decrypted = await window.decryptCommitData(commit.encryptedData, commit.iv);
+                if (!decrypted) {
+                    alert('Your encryption key has expired. Please log in again to share this commit.');
+                    throw new Error('Encryption key expired or missing');
+                }
+                dataToShare = decrypted;
+            }
+            catch (decryptError) {
+                console.error('Failed to decrypt commit for sharing:', decryptError);
+                alert('Failed to decrypt this commit for sharing. Please log in again.');
+                throw decryptError;
+            }
+        }
+        if (!dataToShare || dataToShare.byteLength === 0) {
+            alert('This commit has no data available to share.');
+            throw new Error('Commit data not available for sharing');
+        }
+        const uint8Array = new Uint8Array(dataToShare);
         const binaryString = Array.from(uint8Array, byte => String.fromCharCode(byte)).join('');
         const base64Data = btoa(binaryString);
         const requestBody = {
@@ -244,13 +297,13 @@ async function generateShareInfo(structureId, commit) {
             }
         };
         // Use the new shareCommit API function
-        const result = await shareCommit(requestBody);
+        const result = await window.shareCommit(requestBody);
         if (!result) {
             throw new Error("Failed to share commit");
         }
         // Construct the full shareable URL
         const baseUrl = window.location.origin;
-        const shareUrl = result.shareUrl || `${baseUrl}/shared?shareId=${result.shareId}`;
+        const shareUrl = result.shareUrl || `${baseUrl}/?shareId=${result.shareId}`;
         const shareInfo = {
             shareUrl: shareUrl,
             shareId: result.shareId,
@@ -308,15 +361,46 @@ async function handleCommitShareWithPopup(structureId, commit) {
             background: rgba(0,0,0,0.5);
             z-index: 999;
         `;
-        // Create content
+        // Create content without innerHTML so share URLs cannot inject markup.
         const content = document.createElement('div');
-        content.innerHTML = `
-            <h3>Share Link</h3>
-            <p>Your share link:</p>
-            <input type="text" id="share-url-input" value="${shareUrl}" readonly style="width: 100%; padding: 8px; margin: 10px 0; border: 1px solid #ccc; border-radius: 4px;">
-            <button id="copy-button" style="padding: 8px 16px; background: #3498db; color: white; border: none; border-radius: 4px; cursor: pointer;">Copy to Clipboard</button>
-            <button id="close-button" style="margin-left: 10px; padding: 8px 16px; background: #95a5a6; color: white; border: none; border-radius: 4px; cursor: pointer;">Close</button>
-        `;
+        const heading = document.createElement('h3');
+        heading.textContent = 'Share Link';
+        content.appendChild(heading);
+        const description = document.createElement('p');
+        description.textContent = 'Your share link:';
+        content.appendChild(description);
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.id = 'share-url-input';
+        input.value = shareUrl;
+        input.readOnly = true;
+        input.style.width = '100%';
+        input.style.padding = '8px';
+        input.style.margin = '10px 0';
+        input.style.border = '1px solid #ccc';
+        input.style.borderRadius = '4px';
+        content.appendChild(input);
+        const copyButtonEl = document.createElement('button');
+        copyButtonEl.id = 'copy-button';
+        copyButtonEl.textContent = 'Copy to Clipboard';
+        copyButtonEl.style.padding = '8px 16px';
+        copyButtonEl.style.background = '#3498db';
+        copyButtonEl.style.color = 'white';
+        copyButtonEl.style.border = 'none';
+        copyButtonEl.style.borderRadius = '4px';
+        copyButtonEl.style.cursor = 'pointer';
+        content.appendChild(copyButtonEl);
+        const closeButtonEl = document.createElement('button');
+        closeButtonEl.id = 'close-button';
+        closeButtonEl.textContent = 'Close';
+        closeButtonEl.style.marginLeft = '10px';
+        closeButtonEl.style.padding = '8px 16px';
+        closeButtonEl.style.background = '#95a5a6';
+        closeButtonEl.style.color = 'white';
+        closeButtonEl.style.border = 'none';
+        closeButtonEl.style.borderRadius = '4px';
+        closeButtonEl.style.cursor = 'pointer';
+        content.appendChild(closeButtonEl);
         popup.appendChild(content);
         document.body.appendChild(overlay);
         document.body.appendChild(popup);

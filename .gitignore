@@ -95,3 +95,10 @@ typings/
 out/
 
 # dist/dash/
+
+# Mac Double
+._*
+
+# Temporary local dev HTTPS server (self-signed cert) + helper script
+cert/
+serve_py.py

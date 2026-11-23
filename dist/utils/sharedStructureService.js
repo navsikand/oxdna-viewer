@@ -1,6 +1,6 @@
 /// <reference path="../typescript_definitions/oxView.d.ts" />
 /// <reference path="../typescript_definitions/index.d.ts" />
-import { inflate } from "https://cdn.skypack.dev/pako";
+import { inflate } from "https://cdn.jsdelivr.net/npm/pako/+esm";
 /**
  * Loads a shared structure from the backend API
  */

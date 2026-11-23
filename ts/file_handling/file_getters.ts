@@ -47,23 +47,14 @@ function readFilesFromURLParams() {
     }
 }
 
-// Get a file from the PDB
+// Get a file from the PDB (legacy PDB format)
 function readPDBFromId(pdbID: string) {
     readFilesFromURLPath([`https://files.rcsb.org/download/${pdbID}.pdb`]);
 }
 
-// Get a file from Nanobase
-function readNanobaseFromURL(url: string) {
-    const id = url.split('/').pop();
-    const path = `https://nanobase.org/oxdna/${id}`
-    let req = new XMLHttpRequest();
-    req.open("GET", path);
-    req.onload = () => {
-        let file_names = req.response.split('|');
-        file_names = file_names.map(file_name => `https://nanobase.org/file/${id}/structure/${file_name}`)
-        readFilesFromURLPath(file_names);
-    }
-    req.send();
+// Get a mmCIF file from the RCSB
+function readMMCIFFromId(pdbID: string) {
+    readFilesFromURLPath([`https://files.rcsb.org/download/${pdbID}.cif`]);
 }
 
 // Get files from messages
@@ -103,6 +94,9 @@ function handleMessage(data) {
             }
             if("Arrows" in view_settings) {
                 setArrowsVisibility(view_settings["Arrows"]);
+            }
+            if("Background" in view_settings) {
+                api.setBackgroundColor(view_settings["Background"])
             }
         }
         //set the names and extensions for every passed file

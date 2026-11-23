@@ -4,6 +4,11 @@ declare module "https://cdn.skypack.dev/dexie" {
   export { EntityTable };
 }
 
+interface Window {
+  getAPIBaseURL: () => string;
+  getAPIBaseUrl: () => string;
+}
+
 declare module "https://cdn.skypack.dev/pako" {
   export interface DeflateOptions {
     level?: number;
@@ -30,6 +35,23 @@ declare module "https://cdn.skypack.dev/pako" {
    * @param options - Optional inflate options.
    * @returns The decompressed data.
    */
+  export function inflate(
+    input: Uint8Array | ArrayBuffer,
+    options?: InflateOptions,
+  ): any;
+}
+
+declare module "https://cdn.jsdelivr.net/npm/pako/+esm" {
+  export interface DeflateOptions {
+    level?: number;
+  }
+  export function deflate(
+    input: string | Uint8Array,
+    options?: DeflateOptions,
+  ): Uint8Array;
+  export interface InflateOptions {
+    to?: "string";
+  }
   export function inflate(
     input: Uint8Array | ArrayBuffer,
     options?: InflateOptions,

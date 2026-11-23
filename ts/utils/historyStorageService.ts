@@ -1,7 +1,11 @@
 /// <reference path="../typescript_definitions/oxView.d.ts" />
 /// <reference path="../typescript_definitions/index.d.ts" />
 
-import { deflate, inflate } from "https://cdn.skypack.dev/pako";
+import { deflate, inflate } from "https://cdn.jsdelivr.net/npm/pako/+esm";
+
+function getDashboardLoginPath(): string {
+  return window.location.origin + "/dist/dash/login";
+}
 
 function createCompressedOxViewFile(
   space?: string | number,
@@ -68,6 +72,41 @@ function reconstructBranchesFromParents(commits: any[]) {
   return branches;
 }
 
+function resolveBranchNameFromCommit(structure: any, commitId: string | null | undefined): string | null {
+  if (!commitId || !structure?.branches) {
+    return null;
+  }
+
+  for (const [branchName, commitIds] of Object.entries(structure.branches)) {
+    if ((commitIds as string[]).includes(commitId)) {
+      return branchName;
+    }
+  }
+
+  return null;
+}
+
+function getResolvedCurrentBranchName(structure: any, requestedBranchName: string | null, loadedCommitId: string | null): string {
+  if (requestedBranchName && structure?.branches?.[requestedBranchName]) {
+    return requestedBranchName;
+  }
+
+  const branchFromCommit = resolveBranchNameFromCommit(structure, loadedCommitId);
+  if (branchFromCommit) {
+    return branchFromCommit;
+  }
+
+  if (structure?.currentBranchName && structure?.branches?.[structure.currentBranchName]) {
+    return structure.currentBranchName;
+  }
+
+  if (structure?.defaultBranchName && structure?.branches?.[structure.defaultBranchName]) {
+    return structure.defaultBranchName;
+  }
+
+  return "main";
+}
+
 /**
  * Saves the current structure as a new commit in the specified branch.
  */
@@ -85,7 +124,7 @@ async function saveStructure(): Promise<void> {
     const urlParams = new URLSearchParams(queryString);
 
     const structureId = urlParams.get("structureId") as string;
-    const currentBranchName = urlParams.get("branch") || "main"; // Get current branch from URL
+    const requestedBranchName = urlParams.get("branch");
     const loadedCommitId = urlParams.get("commit"); // Get loaded commit ID from URL
 
     if (!structureId) {
@@ -123,6 +162,9 @@ async function saveStructure(): Promise<void> {
         date: Date.now(),
         structureName: structureName,
         branches: { main: [newCommitId] },
+        defaultBranchName: "main",
+        currentBranchName: "main",
+        currentCommitId: newCommitId,
         isSynced: false, // NEW: Default to not synced
         syncedProjectId: null, // NEW: No synced project ID yet
       };
@@ -134,6 +176,7 @@ async function saveStructure(): Promise<void> {
 
     // (no normalization here)
 
+    const currentBranchName = getResolvedCurrentBranchName(oldStructure, requestedBranchName, loadedCommitId);
     const currentBranchCommits = oldStructure.branches[currentBranchName];
     const headCommitId = currentBranchCommits ? currentBranchCommits[currentBranchCommits.length - 1] : null;
 
@@ -156,11 +199,14 @@ async function saveStructure(): Promise<void> {
           alert("Branch name already exists. Please choose a different name.");
           return; // Stop the commit process
         }
-        newBranches[newBranchName] = [loadedCommitId]; // New branch starts from the loaded commit
+        const loadedCommitIndex = currentBranchCommits ? currentBranchCommits.indexOf(loadedCommitId) : -1;
+        newBranches[newBranchName] = loadedCommitIndex >= 0
+          ? currentBranchCommits.slice(0, loadedCommitIndex + 1)
+          : [loadedCommitId];
         parentCommitId = loadedCommitId; // New commit's parent is the loaded commit
         newBranches[newBranchName].push(newCommitId); // Add new commit to the new branch
         // Redirect to the new branch after commit
-        window.location.href = `/?structureId=${structureId}&branch=${newBranchName}&load=true`;
+        window.location.href = `/?structureId=${structureId}&branch=${encodeURIComponent(newBranchName)}&commit=${newCommitId}&load=true`;
 
       } else { // User chose to override (delete future commits)
         if (currentBranchCommits) {
@@ -238,16 +284,18 @@ async function saveStructure(): Promise<void> {
 
     newStructureArray.push(newCommit);
 
-    // Ensure chronological order and rebuild branches so branch ordering matches timestamps
     sortCommitsChronologically(newStructureArray);
-    newBranches = reconstructBranchesFromParents(newStructureArray);
 
     await (window as any).DexieDB.structureData.put({
+      ...oldStructure,
       id: structureId,
       commits: newStructureArray, // Updated to use 'commits'
       date: Date.now(), // Update date on commit
       structureName: oldStructure.structureName,
       branches: newBranches,
+      defaultBranchName: oldStructure.defaultBranchName || "main",
+      currentBranchName: currentBranchName,
+      currentCommitId: newCommitId,
       isSynced: oldStructure.isSynced || false, // Preserve sync status
       syncedProjectId: oldStructure.syncedProjectId || null, // Preserve synced project ID
     });
@@ -294,7 +342,7 @@ async function loadStructure(): Promise<void> {
         }
 
         const explicitCommit = urlParams.get("commit");
-        const commitToFetchId = explicitCommit || publicProject.latestCommitId;
+        const commitToFetchId = explicitCommit || publicProject.currentCommitId || publicProject.latestCommit?.id;
         if (!commitToFetchId) {
           console.error("loadStructure: No commit available for public project.");
           return;
@@ -315,7 +363,7 @@ async function loadStructure(): Promise<void> {
           console.log("loadStructure: User opted for temporary view of public project.");
           // Decompress and load directly without persisting
           const compData = new Uint8Array(commitDataBuffer);
-          const uncompressed = inflate(compData, { to: "string" });
+          const uncompressed = new TextDecoder().decode(inflate(compData));
           const file = new File([uncompressed], "public.oxview", { type: "text/plain" });
           view.inboxingMode.set("None");
           view.centeringMode.set("None");
@@ -334,8 +382,7 @@ async function loadStructure(): Promise<void> {
           } else {
             dataBuf = await (window as any).readPublicCommitData(publicProjectId, c.id);
             if (!dataBuf) {
-              console.warn(`loadStructure: Skipping commit ${c.id} - data fetch failed.`);
-              continue;
+              throw new Error(`Failed to read public commit data for ${c.id}`);
             }
           }
           commitsToStore.push({
@@ -343,7 +390,8 @@ async function loadStructure(): Promise<void> {
             commitName: c.commitName || 'Commit',
             data: dataBuf,
             parent: c.parentCommitId || null,
-            createdAt: c.createdAt || null
+            branchName: c.branchName || null,
+            createdAt: c.createdAt ? new Date(c.createdAt).getTime() : Date.now()
           });
         }
 
@@ -407,14 +455,55 @@ async function loadStructure(): Promise<void> {
           branches['main'] = orderedCommits.map(c => c.commitId);
         }
 
-        const existing = await (window as any).DexieDB.structureData.get(publicProjectId);
-        if (!existing) {
+        const existingProjects = await (window as any).DexieDB.structureData.toArray();
+        const existing = existingProjects.find((project: any) => project.publicSourceId === publicProjectId);
+        const localProjectId = existing?.id || (window as any).createId();
+        let cancelledRemoteRefresh = false;
+        if (existing) {
+          const remoteIds = new Set(orderedCommits.map((commit: any) => commit.commitId).filter(Boolean));
+          const hasLocalOnlyCommits = (existing.commits || [])
+            .map((commit: any) => commit.commitId)
+            .filter(Boolean)
+            .some((commitId: string) => !remoteIds.has(commitId));
+          if (hasLocalOnlyCommits && !window.confirm("This public clone has local-only commits. Reloading from the public source will discard those local changes. Continue?")) {
+            id = localProjectId;
+            cancelledRemoteRefresh = true;
+            const nextParams = new URLSearchParams(window.location.search);
+            nextParams.delete('publicProject');
+            nextParams.set('structureId', localProjectId);
+            nextParams.set('load', 'true');
+            const existingCommitId = existing.currentCommitId || existing.commits?.[existing.commits.length - 1]?.commitId;
+            urlParams.delete('publicProject');
+            urlParams.set('structureId', localProjectId);
+            urlParams.set('load', 'true');
+            if (existingCommitId) {
+              nextParams.set('commit', existingCommitId);
+              urlParams.set('commit', existingCommitId);
+            } else {
+              urlParams.delete('commit');
+            }
+            if (existing.currentBranchName || existing.defaultBranchName) {
+              nextParams.set('branch', existing.currentBranchName || existing.defaultBranchName);
+              urlParams.set('branch', existing.currentBranchName || existing.defaultBranchName);
+            } else {
+              urlParams.delete('branch');
+            }
+            window.history.replaceState({}, '', `/?${nextParams.toString()}`);
+            console.warn("loadStructure: Public project refresh cancelled to preserve local-only commits.");
+          }
+        }
+        if (cancelledRemoteRefresh) {
+          console.log(`loadStructure: Continuing with existing public clone ${localProjectId}.`);
+        } else if (!existing) {
           await (window as any).DexieDB.structureData.put({
-            id: publicProjectId,
+            id: localProjectId,
             commits: orderedCommits,
             date: Date.now(),
             structureName: publicProject.projectName,
-            branches: branches,
+            branches: publicProject.branches || branches,
+            defaultBranchName: publicProject.defaultBranchName || 'main',
+            currentBranchName: publicProject.currentBranchName || publicProject.defaultBranchName || 'main',
+            currentCommitId: publicProject.currentCommitId || commitToFetchId,
             isSynced: false,
             syncedProjectId: null,
             isPublic: true,
@@ -423,28 +512,35 @@ async function loadStructure(): Promise<void> {
           });
           console.log(`loadStructure: Stored cloned public project with ${orderedCommits.length} commits locally.`);
         } else {
-          // Merge: add missing commits
-          const existingIds = new Set(existing.commits.map((c: any) => c.commitId));
-          let added = 0;
-          for (const oc of orderedCommits) {
-            if (!existingIds.has(oc.commitId)) {
-              existing.commits.push(oc);
-              added++;
-            }
-          }
-
-          // Now sort the combined commits and reconstruct branches based on parent links
-          sortCommitsChronologically(existing.commits);
-          existing.branches = reconstructBranchesFromParents(existing.commits);
-
-          if (!existing.publicSourceId) existing.publicSourceId = publicProjectId;
+          existing.commits = orderedCommits;
+          existing.branches = publicProject.branches || branches;
+          existing.defaultBranchName = publicProject.defaultBranchName || existing.defaultBranchName || 'main';
+          existing.currentBranchName = publicProject.currentBranchName || existing.currentBranchName || existing.defaultBranchName || 'main';
+          existing.currentCommitId = publicProject.currentCommitId || commitToFetchId;
+          existing.structureName = publicProject.projectName || existing.structureName;
+          existing.isSynced = false;
+          existing.syncedProjectId = null;
+          existing.isPublic = true;
+          existing.isRemote = false;
+          existing.publicSourceId = publicProjectId;
           existing.date = Date.now();
           await (window as any).DexieDB.structureData.put(existing);
-          console.log(`loadStructure: Merged public project history; added ${added} new commits.`);
+          console.log(`loadStructure: Replaced public project clone with ${orderedCommits.length} remote commits.`);
         }
 
-        id = publicProjectId;
-        console.log(`loadStructure: Public project saved; continuing with id ${id}.`);
+        if (!cancelledRemoteRefresh) {
+          id = localProjectId;
+          const nextParams = new URLSearchParams(window.location.search);
+          nextParams.delete('publicProject');
+          nextParams.set('structureId', localProjectId);
+          nextParams.set('load', 'true');
+          nextParams.set('commit', commitToFetchId);
+          if (publicProject.currentBranchName || publicProject.defaultBranchName) {
+            nextParams.set('branch', publicProject.currentBranchName || publicProject.defaultBranchName);
+          }
+          window.history.replaceState({}, '', `/?${nextParams.toString()}`);
+          console.log(`loadStructure: Public project saved; continuing with id ${id}.`);
+        }
       } catch (e) {
         console.error("loadStructure: Error while preparing public project:", e);
         return;
@@ -465,7 +561,7 @@ async function loadStructure(): Promise<void> {
 
     let commitToLoad;
     const commitId = urlParams.get("commit");
-    const branchName = urlParams.get("branch");
+    let branchName = urlParams.get("branch");
 
     if (commitId) {
       console.log(`loadStructure: Specific commitId provided: ${commitId}.`);
@@ -473,6 +569,9 @@ async function loadStructure(): Promise<void> {
       if (!commitToLoad) {
         console.error(`loadStructure: Commit with ID ${commitId} not found in structure ${id}.`);
         return; // Exit early if specific commit not found
+      }
+      if (!branchName) {
+        branchName = resolveBranchNameFromCommit(storedData, commitId) || storedData.currentBranchName || storedData.defaultBranchName || 'main';
       }
       console.log("loadStructure: Specific commit found.", commitToLoad);
     } else {
@@ -501,11 +600,27 @@ async function loadStructure(): Promise<void> {
 
       if (!commitToLoad && storedData.commits.length > 0) { // Updated to use 'commits'
         commitToLoad = storedData.commits[storedData.commits.length - 1]; // Updated to use 'commits'
+        branchName = resolveBranchNameFromCommit(storedData, commitToLoad.commitId) || storedData.currentBranchName || storedData.defaultBranchName || 'main';
         console.warn(`loadStructure: Falling back to last commit in structure ${id} as no specific commit or branch head could be determined.`);
       }
     }
 
     if (commitToLoad) {
+      await (window as any).DexieDB.structureData.update(id, {
+        currentBranchName: branchName || storedData.currentBranchName || storedData.defaultBranchName || 'main',
+        currentCommitId: commitToLoad.commitId,
+      });
+
+      const resolvedParams = new URLSearchParams(window.location.search);
+      resolvedParams.set('structureId', id);
+      resolvedParams.set('load', 'true');
+      resolvedParams.set('commit', commitToLoad.commitId);
+      if (branchName) {
+        resolvedParams.set('branch', branchName);
+      }
+      resolvedParams.delete('publicProject');
+      window.history.replaceState({}, '', `/?${resolvedParams.toString()}`);
+
       console.log("loadStructure: Commit selected for loading.", commitToLoad);
 
       // Handle encrypted commits - decrypt on-the-fly
@@ -515,45 +630,16 @@ async function loadStructure(): Promise<void> {
         console.log("loadStructure: Commit is encrypted, decrypting on-the-fly...");
 
         try {
-          // Get key from localStorage (with expiration check)
-          const getStoredKey = (): string | null => {
-            try {
-              const stored = localStorage.getItem('enc_key_data');
-              if (!stored) return null;
-
-              const data = JSON.parse(stored);
-
-              // Check expiration (24 hours)
-              if (Date.now() >= data.expiresAt) {
-                console.warn('Encryption key expired');
-                localStorage.removeItem('enc_key_data');
-                return null;
-              }
-
-              return data.key;
-            } catch {
-              return null;
-            }
-          };
-
-          const keyBase64 = getStoredKey();
+          const keyBase64 = (window as any).getStoredEncryptionKey();
 
           if (!keyBase64) {
             console.error("loadStructure: No valid encryption key - redirecting to login");
             alert('Your encryption key has expired. Please log in again to access encrypted structures.');
-            window.location.href = '/login';
+            window.location.href = getDashboardLoginPath();
             return;
           }
 
-          // Convert base64 key to CryptoKey
-          const keyBuffer = Uint8Array.from(atob(keyBase64), c => c.charCodeAt(0));
-          const aesKey = await crypto.subtle.importKey(
-            'raw',
-            keyBuffer,
-            { name: 'AES-GCM', length: 256 },
-            false,
-            ['decrypt']
-          );
+          const aesKey = await (window as any).importAesKey(keyBase64);
 
           // Decrypt the data
           const decryptedData = await crypto.subtle.decrypt(
@@ -569,7 +655,7 @@ async function loadStructure(): Promise<void> {
           if (!decryptedData || decryptedData.byteLength === 0) {
             console.error("loadStructure: Decryption resulted in empty data");
             if (typeof (window as any).Metro !== 'undefined') {
-              (window as any).Metro.notify({
+              (window as any).Metro.notify.create({
                 title: 'Decryption Failed',
                 message: 'Failed to decrypt commit data',
                 type: 'alert',
@@ -584,21 +670,21 @@ async function loadStructure(): Promise<void> {
         } catch (error) {
           console.error("loadStructure: Failed to decrypt commit:", error);
           alert('Failed to decrypt structure. Please log in again.');
-          window.location.href = '/login';
+          window.location.href = getDashboardLoginPath();
           return;
         }
       }
 
       console.log("loadStructure: Decompressing data...");
       const compData = new Uint8Array(dataToDecompress);
-      const uncompressed = inflate(compData, { to: "string" });
+      const uncompressed = new TextDecoder().decode(inflate(compData));
       console.log("loadStructure: Data decompressed. Creating File object...");
 
       // Validate the decompressed data before creating file
       if (uncompressed === undefined || uncompressed === null || uncompressed === "") {
         console.error("loadStructure: Decompressed data is invalid (undefined, null, or empty)");
         if (typeof (window as any).Metro !== 'undefined') {
-          (window as any).Metro.notify({
+          (window as any).Metro.notify.create({
             title: 'Data Error',
             message: 'Failed to load structure: Invalid data after decompression',
             type: 'alert',
@@ -613,7 +699,7 @@ async function loadStructure(): Promise<void> {
       } catch (error) {
         console.error("loadStructure: Decompressed data is not valid JSON:", error);
         if (typeof (window as any).Metro !== 'undefined') {
-          (window as any).Metro.notify({
+          (window as any).Metro.notify.create({
             title: 'Data Error',
             message: 'Failed to load structure: Data is not valid JSON format',
             type: 'alert',
@@ -626,7 +712,7 @@ async function loadStructure(): Promise<void> {
       if (typeof uncompressed !== 'string') {
         console.error("loadStructure: Decompressed data is not a string:", typeof uncompressed);
         if (typeof (window as any).Metro !== 'undefined') {
-          (window as any).Metro.notify({
+          (window as any).Metro.notify.create({
             title: 'Data Error',
             message: 'Failed to load structure: Decompressed data is not in expected format',
             type: 'alert',
@@ -699,6 +785,9 @@ async function createNewProject() {
           date: Date.now(),
           structureName: structureName,
           branches: { main: [newCommitId] },
+          defaultBranchName: "main",
+          currentBranchName: "main",
+          currentCommitId: newCommitId,
           isSynced: false, // NEW: Default to not synced
           syncedProjectId: null, // NEW: No synced project ID yet
         };
@@ -761,6 +850,9 @@ async function createBlankProject() {
     date: Date.now(),
     structureName: structureName,
     branches: { main: [newCommitId] }, // Main branch points to the initial commit
+    defaultBranchName: "main",
+    currentBranchName: "main",
+    currentCommitId: newCommitId,
     isSynced: false, // NEW: Default to not synced
     syncedProjectId: null, // NEW: No synced project ID yet
   };

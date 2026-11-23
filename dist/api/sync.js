@@ -136,6 +136,7 @@ async function addRemoteCommit(projectId, commit, branchName, parentCommitId) {
             commitName: commit.commitName,
             commitData: arrayBufferToBase64(commit.data),
             parentCommitId: parentCommitId,
+            branchName: branchName,
         };
         // Pass existing commit ID if available
         if (commit.commitId) {
@@ -296,7 +297,8 @@ async function getProjectCommits(projectId) {
             id: c.id,
             commitName: c.commitName,
             createdAt: c.createdAt,
-            parentCommitId: c.parentCommitId || null
+            parentCommitId: c.parentCommitId || null,
+            branchName: c.branchName || null
         }));
     }
     catch (error) {
@@ -494,6 +496,52 @@ async function getPublicProject(projectId) {
         return null;
     }
 }
+async function getRemoteProject(projectId) {
+    if (!isLoggedIn()) {
+        return null;
+    }
+    try {
+        const API_BASE = `${getAPIBaseUrl()}/sync`;
+        const response = await fetch(`${API_BASE}/project/${projectId}`, {
+            headers: getAuthHeader(),
+        });
+        if (!response.ok) {
+            return null;
+        }
+        const data = await response.json();
+        return data.project || null;
+    }
+    catch (e) {
+        console.error('getRemoteProject error:', e);
+        return null;
+    }
+}
+async function updateRemoteProjectRefs(projectId, payload) {
+    if (!isLoggedIn()) {
+        return null;
+    }
+    try {
+        const API_BASE = `${getAPIBaseUrl()}/sync`;
+        const response = await fetch(`${API_BASE}/project/${projectId}/refs`, {
+            method: 'PATCH',
+            headers: {
+                'Content-Type': 'application/json',
+                ...getAuthHeader(),
+            },
+            body: JSON.stringify(payload),
+        });
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Failed to update remote branch metadata (${response.status}): ${errorText || response.statusText}`);
+        }
+        const data = await response.json();
+        return data.project || null;
+    }
+    catch (e) {
+        console.error('updateRemoteProjectRefs error:', e);
+        throw e;
+    }
+}
 async function getPublicProjectCommits(projectId) {
     try {
         const API_BASE = `${getAPIBaseUrl()}/public`;
@@ -506,7 +554,8 @@ async function getPublicProjectCommits(projectId) {
             id: c.id,
             commitName: c.commitName,
             createdAt: c.createdAt,
-            parentCommitId: c.parentCommitId || null
+            parentCommitId: c.parentCommitId || null,
+            branchName: c.branchName || null
         }));
     }
     catch (e) {
@@ -535,7 +584,9 @@ async function readPublicCommitData(projectId, commitId) {
     }
 }
 window.getPublicProject = getPublicProject;
+window.getRemoteProject = getRemoteProject;
 window.getPublicProjectCommits = getPublicProjectCommits;
 window.readPublicCommitData = readPublicCommitData;
+window.updateRemoteProjectRefs = updateRemoteProjectRefs;
 // Export the getAPIBaseUrl function globally for use in other modules
 window.getAPIBaseURL = getAPIBaseUrl;

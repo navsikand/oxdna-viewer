@@ -18,6 +18,84 @@ interface SyncState {
   lastSyncTime?: number;
 }
 
+function appendSyncBadge(container: HTMLElement, status: SyncStatus | 'remote'): void {
+  const badge = document.createElement("span");
+  badge.classList.add("badge");
+
+  switch (status) {
+    case "local":
+      badge.classList.add("bg-secondary");
+      badge.textContent = "Local";
+      break;
+    case "synced":
+      badge.classList.add("bg-success");
+      badge.textContent = "Synced";
+      break;
+    case "out-of-sync":
+      badge.classList.add("bg-warning");
+      badge.textContent = "Out of sync";
+      break;
+    case "conflict":
+      badge.classList.add("bg-danger");
+      badge.textContent = "Conflict";
+      break;
+    case "public-synced":
+      badge.classList.add("bg-info");
+      badge.textContent = "Public Clone";
+      break;
+    case "public-out-of-sync":
+      badge.classList.add("bg-warning");
+      badge.textContent = "Public Updates";
+      break;
+    case "remote":
+      badge.classList.add("bg-info");
+      badge.textContent = "Remote";
+      break;
+  }
+
+  container.appendChild(badge);
+}
+
+function createProjectCardHeader(title: string, status: SyncStatus | 'remote', direction?: 'push' | 'pull' | 'both'): HTMLElement {
+  const wrapper = document.createElement("div");
+  wrapper.style.display = "flex";
+  wrapper.style.justifyContent = "space-between";
+  wrapper.style.alignItems = "center";
+
+  const titleEl = document.createElement("span");
+  titleEl.textContent = title;
+  wrapper.appendChild(titleEl);
+
+  const badgeContainer = document.createElement("div");
+  appendSyncBadge(badgeContainer, status);
+
+  if (direction) {
+    const directionIndicator = document.createElement("span");
+    directionIndicator.className = "mx-1";
+    directionIndicator.textContent = direction === "push" ? "↑" : direction === "pull" ? "↓" : "↕";
+    badgeContainer.appendChild(directionIndicator);
+  }
+
+  wrapper.appendChild(badgeContainer);
+  return wrapper;
+}
+
+function getSafeHttpUrl(rawUrl: string | undefined | null): string | null {
+  if (!rawUrl) {
+    return null;
+  }
+
+  try {
+    const url = new URL(rawUrl, window.location.origin);
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return null;
+    }
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
 // Fetch remote projects and their metadata
 async function fetchRemoteProjects(): Promise<any[]> {
   try {
@@ -664,59 +742,25 @@ async function createProjectCard(project: any): Promise<HTMLElement> {
   const cardHeader = document.createElement("div");
   cardHeader.className = "card-header";
 
-  // Create sync status badge
-  let syncBadge = '';
-  switch (syncState.status) {
-    case 'local':
-      syncBadge = '<span class="badge bg-secondary">Local</span>';
-      break;
-    case 'synced':
-      syncBadge = '<span class="badge bg-success">Synced</span>';
-      break;
-    case 'out-of-sync':
-      syncBadge = '<span class="badge bg-warning">Out of sync</span>';
-      break;
-    case 'conflict':
-      syncBadge = '<span class="badge bg-danger">Conflict</span>';
-      break;
-    case 'public-synced':
-      syncBadge = '<span class="badge bg-info">Public Clone</span>';
-      break;
-    case 'public-out-of-sync':
-      syncBadge = '<span class="badge bg-warning">Public Updates</span>';
-      break;
-  }
-
   // Add directional arrows for out-of-sync status
-  let directionIndicator = '';
+  let directionIndicator: 'push' | 'pull' | 'both' | undefined;
   const isStandardOutOfSync = syncState.status === 'out-of-sync';
   const isPublicOutOfSync = syncState.status === 'public-out-of-sync';
   if ((isStandardOutOfSync || isPublicOutOfSync) && syncState.direction) {
-    if (syncState.direction === 'push') {
-      directionIndicator = ' <span class="mx-1">↑</span>'; // Up arrow for push
-    } else if (syncState.direction === 'pull') {
-      directionIndicator = ' <span class="mx-1">↓</span>'; // Down arrow for pull
-    } else if (syncState.direction === 'both') {
-      directionIndicator = ' <span class="mx-1">↕</span>'; // Both arrows for conflict
-    }
+    directionIndicator = syncState.direction;
   }
 
-  cardHeader.innerHTML = `
-    <div style="display: flex; justify-content: space-between; align-items: center;">
-      <span>${project.structureName}</span>
-      <div>
-        ${syncBadge}${directionIndicator}
-      </div>
-    </div>
-  `;
+  cardHeader.appendChild(createProjectCardHeader(project.structureName || "Untitled Project", syncState.status, directionIndicator));
   card.appendChild(cardHeader);
 
   const cardContent = document.createElement("div");
   cardContent.className = "card-content p-2";
-  cardContent.innerHTML = `
-    <div>Last edited: ${new Date(project.date).toLocaleDateString()}</div>
-    <div>Commits: ${syncState.localCommitCount || 0}${syncState.remoteCommitCount !== undefined ? ` (Remote: ${syncState.remoteCommitCount})` : ''}</div>
-  `;
+  const lastEdited = document.createElement("div");
+  lastEdited.textContent = `Last edited: ${new Date(project.date).toLocaleDateString()}`;
+  cardContent.appendChild(lastEdited);
+  const commitCount = document.createElement("div");
+  commitCount.textContent = `Commits: ${syncState.localCommitCount || 0}${syncState.remoteCommitCount !== undefined ? ` (Remote: ${syncState.remoteCommitCount})` : ''}`;
+  cardContent.appendChild(commitCount);
   card.appendChild(cardContent);
 
   const cardFooter = document.createElement("div");
@@ -910,26 +954,22 @@ async function createRemoteProjectCard(project: any): Promise<HTMLElement> {
   const cardHeader = document.createElement("div");
   cardHeader.className = "card-header";
 
-  // Create sync status badge for remote projects
-  const syncBadge = '<span class="badge bg-info">Remote</span>';
-
-  cardHeader.innerHTML = `
-    <div style="display: flex; justify-content: space-between; align-items: center;">
-      <span>${project.projectName}</span>
-      <div>
-        ${syncBadge}
-      </div>
-    </div>
-  `;
+  cardHeader.appendChild(createProjectCardHeader(project.projectName || "Remote Project", "remote"));
   card.appendChild(cardHeader);
 
   const cardContent = document.createElement("div");
   cardContent.className = "card-content p-2";
-  cardContent.innerHTML = `
-    <div>Created: ${new Date(project.createdAt).toLocaleDateString()}</div>
-    <div>Commits: ${project.commitCount || 0}</div>
-    ${project.latestCommit ? `<div>Last commit: ${new Date(project.latestCommit.createdAt).toLocaleDateString()}</div>` : ''}
-  `;
+  const created = document.createElement("div");
+  created.textContent = `Created: ${new Date(project.createdAt).toLocaleDateString()}`;
+  cardContent.appendChild(created);
+  const remoteCommitCount = document.createElement("div");
+  remoteCommitCount.textContent = `Commits: ${project.commitCount || 0}`;
+  cardContent.appendChild(remoteCommitCount);
+  if (project.latestCommit) {
+    const lastCommit = document.createElement("div");
+    lastCommit.textContent = `Last commit: ${new Date(project.latestCommit.createdAt).toLocaleDateString()}`;
+    cardContent.appendChild(lastCommit);
+  }
   card.appendChild(cardContent);
 
   const cardFooter = document.createElement("div");
@@ -978,10 +1018,25 @@ function createSharedCommitCard(commit: any): HTMLElement {
 
   const cardContent = document.createElement("div");
   cardContent.className = "card-content p-2";
-  cardContent.innerHTML = `
-    <p>Shared on: ${new Date(commit.createdAt).toLocaleDateString()}</p>
-    <p>Share URL: <a href="${commit.shareUrl}" target="_blank">${commit.shareUrl}</a></p>
-  `;
+  const sharedOn = document.createElement("p");
+  sharedOn.textContent = `Shared on: ${new Date(commit.createdAt).toLocaleDateString()}`;
+  cardContent.appendChild(sharedOn);
+  const shareUrlParagraph = document.createElement("p");
+  shareUrlParagraph.appendChild(document.createTextNode("Share URL: "));
+  const safeShareUrl = getSafeHttpUrl(commit.shareUrl);
+  if (safeShareUrl) {
+    const shareUrl = document.createElement("a");
+    shareUrl.href = safeShareUrl;
+    shareUrl.target = "_blank";
+    shareUrl.rel = "noopener noreferrer";
+    shareUrl.textContent = safeShareUrl;
+    shareUrlParagraph.appendChild(shareUrl);
+  } else {
+    const invalidUrl = document.createElement("span");
+    invalidUrl.textContent = "Invalid share URL";
+    shareUrlParagraph.appendChild(invalidUrl);
+  }
+  cardContent.appendChild(shareUrlParagraph);
   card.appendChild(cardContent);
 
   const cardFooter = document.createElement("div");
@@ -992,7 +1047,12 @@ function createSharedCommitCard(commit: any): HTMLElement {
   loadBtn.textContent = "Load";
   loadBtn.className = "button primary small";
   loadBtn.addEventListener("click", () => {
-    window.location.href = commit.shareUrl;
+    const safeUrl = getSafeHttpUrl(commit.shareUrl);
+    if (!safeUrl) {
+      alert("Invalid share URL");
+      return;
+    }
+    window.location.href = safeUrl;
   });
   cardFooter.appendChild(loadBtn);
 
@@ -1031,80 +1091,65 @@ async function refreshPublicClonedProject(localProject: any): Promise<void> {
     const sourceId = localProject.publicSourceId;
     if (!sourceId) return;
 
+    const remoteProject = await (window as any).getPublicProject?.(sourceId);
+    if (!remoteProject) {
+      throw new Error("Public source no longer exists or is no longer public.");
+    }
+
     // Fetch remote commit list
     const remoteCommits = await (window as any).getPublicProjectCommits(sourceId);
-    if (!remoteCommits || remoteCommits.length === 0) {
-      if (notify) notify.create("No public commits found", null, { cls: "warning", keepOpen: false });
+    const remoteIds = new Set((remoteCommits || []).map((commit: any) => commit.id).filter(Boolean));
+    const hasLocalOnlyCommits = (localProject.commits || [])
+      .map((commit: any) => commit.commitId)
+      .filter(Boolean)
+      .some((commitId: string) => !remoteIds.has(commitId));
+    if (hasLocalOnlyCommits && !confirm("This public clone has local-only commits. Refreshing from the public source will discard those local changes. Continue?")) {
+      if (notify) notify.create("Refresh cancelled to preserve local changes", null, { cls: "warning", keepOpen: false });
       return;
     }
+    const existingCommitsById = new Map<string, any>((localProject.commits || []).map((commit: any) => [commit.commitId, commit]));
+    const refreshedCommits: any[] = [];
 
-    // Determine new commits (by id)
-    const existingCommitIds = new Set((localProject.commits || []).map((c: any) => c.commitId));
-    const newRemoteCommits = remoteCommits.filter((rc: any) => !existingCommitIds.has(rc.id));
-
-    if (newRemoteCommits.length === 0) {
-      if (notify) notify.create("Already up to date", null, { cls: "success", keepOpen: false });
-      return;
-    }
-
-    // Fetch data for each new commit and append
-    for (const rc of newRemoteCommits) {
-      const dataBuf = await (window as any).readPublicCommitData(sourceId, rc.id);
-      if (!dataBuf) {
-        console.warn(`refreshPublicClonedProject: Failed to read commit data for ${rc.id}`);
+    for (const rc of remoteCommits || []) {
+      const existingCommit = existingCommitsById.get(rc.id);
+      if (existingCommit) {
+        refreshedCommits.push({
+          ...existingCommit,
+          commitName: rc.commitName || existingCommit.commitName || "Commit",
+          parent: rc.parentCommitId || null,
+          branchName: rc.branchName || null,
+          createdAt: rc.createdAt ? new Date(rc.createdAt).getTime() : existingCommit.createdAt || Date.now()
+        });
         continue;
       }
-      localProject.commits.push({
+
+      const dataBuf = await (window as any).readPublicCommitData(sourceId, rc.id);
+      if (!dataBuf) {
+        throw new Error(`Failed to read public commit data for ${rc.id}`);
+      }
+      refreshedCommits.push({
         commitId: rc.id,
         commitName: rc.commitName || 'Commit',
         data: dataBuf,
         parent: rc.parentCommitId || null,
-        createdAt: rc.createdAt || Date.now()
+        branchName: rc.branchName || null,
+        createdAt: rc.createdAt ? new Date(rc.createdAt).getTime() : Date.now()
       });
-      // Update main branch listing
-      if (!localProject.branches) localProject.branches = { main: [] };
-      if (!localProject.branches.main) localProject.branches.main = [];
-      localProject.branches.main.push(rc.id);
     }
 
-    // Ensure chronological order and reconstruct branches
-    if (!localProject.commits) localProject.commits = [];
-    localProject.commits.sort((a: any, b: any) => (a.createdAt || 0) - (b.createdAt || 0));
-
-    // reconstruct branches if parent info present
-    const hasParentInfoLocal = localProject.commits.length <= 1 || localProject.commits.some((c: any, i: number) => i > 0 && c.parent);
-    if (hasParentInfoLocal) {
-      const childMap = new Map<string, string[]>();
-      const parentMap = new Map<string, string | null>();
-      for (const c of localProject.commits) {
-        parentMap.set(c.commitId, c.parent || null);
-        if (c.parent) {
-          if (!childMap.has(c.parent)) childMap.set(c.parent, []);
-          childMap.get(c.parent)!.push(c.commitId);
-        }
-      }
-      const leaves = localProject.commits.filter((c: any) => !childMap.has(c.commitId));
-      const branches: any = {};
-      leaves.forEach((leaf: any, idx: number) => {
-        const branchName = idx === 0 ? 'main' : `branch ${idx + 1}`;
-        const branchCommits: string[] = [];
-        let current: string | null = leaf.commitId;
-        const visited = new Set<string>();
-        while (current && !visited.has(current)) {
-          visited.add(current);
-          branchCommits.unshift(current);
-          current = parentMap.get(current) || null;
-        }
-        branches[branchName] = branchCommits;
-      });
-      localProject.branches = branches;
-    } else {
-      localProject.branches = { main: localProject.commits.map((c: any) => c.commitId) };
-    }
+    refreshedCommits.sort((a: any, b: any) => (a.createdAt || 0) - (b.createdAt || 0));
 
     // Persist updated project
     await (window as any).DexieDB.structureData.put({
       ...localProject,
+      structureName: remoteProject.projectName || localProject.structureName,
+      commits: refreshedCommits,
+      branches: remoteProject.branches || getLegacyBranches({ ...localProject, commits: refreshedCommits }),
+      defaultBranchName: remoteProject.defaultBranchName || localProject.defaultBranchName || "main",
+      currentBranchName: remoteProject.currentBranchName || localProject.currentBranchName || localProject.defaultBranchName || "main",
+      currentCommitId: remoteProject.currentCommitId || getLegacyBranchHead(remoteProject.branches || {}, remoteProject.currentBranchName || remoteProject.defaultBranchName || "main"),
+      isPublic: remoteProject.isPublic,
+      publicSourceId: sourceId,
       date: Date.now()
     });
 
@@ -1119,6 +1164,69 @@ async function refreshPublicClonedProject(localProject: any): Promise<void> {
 }
 
 // NEW: Sync project to cloud
+function getLegacyBranches(project: any): Record<string, string[]> {
+  if (project.branches && Object.keys(project.branches).length > 0) {
+    return project.branches;
+  }
+
+  return { main: (project.commits || []).map((commit: any) => commit.commitId).filter(Boolean) };
+}
+
+function getLegacyBranchHead(branches: Record<string, string[]>, branchName: string): string | null {
+  const branch = branches[branchName];
+  return branch && branch.length > 0 ? branch[branch.length - 1] || null : null;
+}
+
+function buildLegacyExpectedHeads(branches: Record<string, string[]>, remoteProject: any): Record<string, string | null> {
+  const expectedHeads: Record<string, string | null> = {};
+  for (const ref of remoteProject?.branchRefs || []) {
+    expectedHeads[ref.name] = ref.headCommitId || null;
+  }
+  for (const [branchName, commitIds] of Object.entries(remoteProject?.branches || {})) {
+    if (!(branchName in expectedHeads)) {
+      expectedHeads[branchName] = getLegacyBranchHead({ [branchName]: commitIds as string[] }, branchName);
+    }
+  }
+  for (const branchName of Object.keys(branches)) {
+    if (!(branchName in expectedHeads)) {
+      expectedHeads[branchName] = null;
+    }
+  }
+  return expectedHeads;
+}
+
+function getLegacyBranchNameForCommit(project: any, commitId: string | null | undefined): string {
+  if (commitId) {
+    for (const [branchName, commitIds] of Object.entries(getLegacyBranches(project))) {
+      if ((commitIds as string[]).includes(commitId)) {
+        return branchName;
+      }
+    }
+  }
+
+  return project.currentBranchName || project.defaultBranchName || "main";
+}
+
+async function updateLegacyRemoteRefs(remoteId: string, localProject: any): Promise<void> {
+  const branches = getLegacyBranches(localProject);
+  const defaultBranchName = localProject.defaultBranchName || "main";
+  const currentBranchName = localProject.currentBranchName || defaultBranchName;
+  const currentCommitId = localProject.currentCommitId || getLegacyBranchHead(branches, currentBranchName);
+  const remoteProject = await (window as any).getRemoteProject?.(remoteId);
+
+  const updatedProject = await updateRemoteProjectRefs(remoteId, {
+    branches,
+    currentBranchName,
+    defaultBranchName,
+    currentCommitId,
+    ...(remoteProject ? { expectedHeads: buildLegacyExpectedHeads(branches, remoteProject) } : {})
+  });
+
+  if (!updatedProject) {
+    throw new Error("Failed to update remote branch metadata");
+  }
+}
+
 async function syncProjectToCloud(projectId: string, projectName: string): Promise<void> {
   try {
     // Get local project data
@@ -1142,12 +1250,14 @@ async function syncProjectToCloud(projectId: string, projectName: string): Promi
       const remoteCommitIds = new Set(remoteCommits.map((c: any) => c.id));
       const newCommits = localProject.commits.filter((c: any) => !remoteCommitIds.has(c.commitId));
       if (newCommits.length === 0) {
+        await updateLegacyRemoteRefs(remoteId, localProject);
         alert("No new commits to push.");
         return;
       }
       for (const commit of newCommits) {
-        await addRemoteCommit(remoteId, commit, "main", commit.parent);
+        await addRemoteCommit(remoteId, commit, getLegacyBranchNameForCommit(localProject, commit.commitId), commit.parent);
       }
+      await updateLegacyRemoteRefs(remoteId, localProject);
       alert(`Pushed ${newCommits.length} new commit(s) to cloud.`);
       refreshLibraryCards();
       return;
@@ -1162,8 +1272,9 @@ async function syncProjectToCloud(projectId: string, projectName: string): Promi
 
     // Sync all existing local commits
     for (const commit of localProject.commits) {
-      await addRemoteCommit(remoteProject.id, commit, "main", commit.parent);
+      await addRemoteCommit(remoteProject.id, commit, getLegacyBranchNameForCommit(localProject, commit.commitId), commit.parent);
     }
+    await updateLegacyRemoteRefs(remoteProject.id, localProject);
 
     // Mark project as synced locally
     await (window as any).markProjectAsSynced(projectId, remoteProject.id);
@@ -1220,4 +1331,3 @@ if (document.readyState === 'loading') {
 
 (window as any).createNew = createNew;
 (window as any).refreshLibraryCards = refreshLibraryCards;
-

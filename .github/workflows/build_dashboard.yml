@@ -35,7 +35,30 @@ jobs:
           npm run build
         env:
           NODE_ENV: production
+          # Without these the build falls back to the endpoint defaults, which used
+          # to be https://nanoapi.navraj.me - a dead route (502, no CORS headers)
+          # that was shipped to production by exactly this workflow. They are
+          # injected here so an automated rebuild cannot regress the endpoints even
+          # if the dashboard repository's defaults change.
+          NEXT_PUBLIC_API_BASE_URL: https://boltzmann-cpp-oxcloud.navraj.me
+          NEXT_PUBLIC_API_BASE_URL_PUBLIC: https://boltzmann-cpp-oxcloud.navraj.me
+          NEXT_PUBLIC_API_AUTH_BASE_URL: https://api.nanobase.org/api/v1
+          NEXT_PUBLIC_API_AUTH_BASE_URL_PUBLIC: https://api.nanobase.org/api/v1
 
+      - name: Verify the built endpoints before committing
+        run: |
+          # Fail the job instead of publishing a bundle that points at a dead host.
+          if grep -rq "nanoapi" dist/dash/_next/static/chunks/ 2>/dev/null; then
+            echo "::error::the built bundle references nanoapi.navraj.me (dead host)"
+            exit 1
+          fi
+          for expected in "https://boltzmann-cpp-oxcloud.navraj.me" "https://api.nanobase.org/api/v1"; do
+            if ! grep -rq "$expected" dist/dash/_next/static/chunks/ 2>/dev/null; then
+              echo "::error::the built bundle is missing $expected"
+              exit 1
+            fi
+          done
+          echo "endpoints verified: no nanoapi, expected hosts present"
       - name: Commit and push build files
         run: |
           git config --global user.name 'github-actions[bot]'
