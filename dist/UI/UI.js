@@ -1010,6 +1010,7 @@ class View {
     }
 }
 let view = new View(document);
+window.view = view;
 // This Class is basically a giant container to deal with all the graphing for the FluctuationWindow
 class fluxGraph {
     title;
