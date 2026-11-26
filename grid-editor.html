@@ -123,9 +123,6 @@ canvas { display: block; width: 100%; height: 100%; cursor: crosshair; }
 (() => {
 'use strict';
 
-// Escape any value rendered into innerHTML (imported JSON is untrusted input).
-const esc = v => String(v).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-
 // ── Grid geometry constants (matching scadnano_gridview.ts) ────────────────
 const COL_SPACING = 2.5;
 const ROW_SPACING = 1.5 * COL_SPACING;          // 3.75
@@ -355,7 +352,7 @@ function updateSelectionInfo() {
     const n = nodes.get(selectedKey);
     if (!n) { selectedKey = null; updateSelectionInfo(); return; }
     const opacityPct = [0, 33, 66, 100][n.opacity];
-    selInfoEl.innerHTML = `<strong>Node ${esc(n.id)}</strong><br>Grid: (${esc(n.col)}, ${esc(n.row)})<br>Opacity: ${opacityPct}%`;
+    selInfoEl.innerHTML = `<strong>Node ${n.id}</strong><br>Grid: (${n.col}, ${n.row})<br>Opacity: ${opacityPct}%`;
     deleteBtn.disabled = false;
     clearSelBtn.disabled = false;
 }
@@ -366,7 +363,7 @@ function updateConnectionInfo() {
         clearConnBtn.disabled = true;
         return;
     }
-    connInfoEl.innerHTML = connections.map(c => `${esc(c.from)} ↔ ${esc(c.to)}`).join('<br>');
+    connInfoEl.innerHTML = connections.map(c => `${c.from} ↔ ${c.to}`).join('<br>');
     clearConnBtn.disabled = false;
 }
 
@@ -811,26 +808,23 @@ document.getElementById('loadHelixPosBtn').addEventListener('click', () => {
     nextNodeId = 0;
 
     const entries = Array.isArray(arr) ? arr : Object.entries(arr).map(([k, v]) => [Number(k), v]);
-    let skipped = 0;
-    for (const [rawId, pos] of entries) {
-        // Imported JSON is untrusted: only accept finite numeric ids/coordinates.
-        const id = Number(rawId), col = Number(pos && pos[0]), row = Number(pos && pos[1]);
-        if (!Number.isFinite(id) || !Number.isFinite(col) || !Number.isFinite(row)) { skipped++; continue; }
+    for (const [id, pos] of entries) {
+        const [col, row] = pos;
         const k = key(col, row);
         const existing = nodes.get(k);
         if (existing) {
             // Overlap: bump opacity by 1 (each helix adds 0.33), cap at 3
             if (existing.opacity < 3) existing.opacity++;
         } else {
-            nodes.set(k, { col, row, id, opacity: 1 });
+            nodes.set(k, { col, row, id: Number(id), opacity: 1 });
         }
-        if (id >= nextNodeId) nextNodeId = id + 1;
+        if (Number(id) >= nextNodeId) nextNodeId = Number(id) + 1;
     }
 
     updateSelectionInfo();
     updateConnectionInfo();
     document.getElementById('fitViewBtn').click();
-    setStatus(`Loaded ${entries.length - skipped} helix positions.` + (skipped ? ` Skipped ${skipped} invalid entr${skipped === 1 ? 'y' : 'ies'}.` : ''));
+    setStatus(`Loaded ${entries.length} helix positions.`);
 });
 
 // ── Init ──────────────────────────────────────────────────────────────────
